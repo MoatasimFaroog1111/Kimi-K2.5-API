@@ -564,6 +564,7 @@ function attachCopyHandlers() {
 async function sendCurrentMessage() {
   const text = dom.messageInput.value.trim();
   if (!text || state.isSending) return;
+
   if (!state.gatewayKey) {
     showAuthentication("أدخل مفتاح الدخول قبل إرسال الرسائل.");
     return;
@@ -571,6 +572,7 @@ async function sendCurrentMessage() {
 
   const conversation = getActiveConversation();
   if (!conversation) return;
+
   if (!conversation.model) {
     showToast("اختر نموذجًا أولًا.");
     return;
@@ -579,8 +581,15 @@ async function sendCurrentMessage() {
   const history = conversation.messages
     .slice(-40)
     .map(({ role, content }) => ({ role, content }));
+
   const now = new Date().toISOString();
-  conversation.messages.push({ role: "user", content: text, createdAt: now });
+
+  conversation.messages.push({
+    role: "user",
+    content: text,
+    createdAt: now,
+  });
+
   conversation.updatedAt = now;
 
   if (conversation.title === "محادثة جديدة") {
@@ -589,14 +598,31 @@ async function sendCurrentMessage() {
 
   dom.messageInput.value = "";
   resizeComposer();
+
   state.isSending = true;
   dom.sendButton.disabled = true;
+
   persistConversations();
   renderAll();
   scrollMessagesToBottom(true);
 
+  let assistantMessage = null;
+  let renderScheduled = false;
+
+  const scheduleStreamRender = () => {
+    if (renderScheduled) return;
+
+    renderScheduled = true;
+
+    window.requestAnimationFrame(() => {
+      renderScheduled = false;
+      renderAll();
+      scrollMessagesToBottom(false);
+    });
+  };
+
   try {
-    const response = await fetch("/chat", {
+    const response = await fetch("/chat/stream", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -609,27 +635,112 @@ async function sendCurrentMessage() {
       }),
     });
 
-    const payload = await readJson(response);
     if (!response.ok) {
-      const error = new Error(payload.detail || `فشل الطلب برمز ${response.status}.`);
+      const payload = await readJson(response);
+      const error = new Error(
+        payload.detail || `فشل الطلب برمز ${response.status}.`,
+      );
       error.status = response.status;
       throw error;
     }
 
-    conversation.messages.push({
+    if (!response.body) {
+      throw new Error("المتصفح لا يدعم قراءة الرد المتدفق.");
+    }
+
+    assistantMessage = {
       role: "assistant",
-      content: payload.response || "لم يُرجع النموذج نصًا.",
+      content: "",
       createdAt: new Date().toISOString(),
-    });
-    conversation.model = payload.model || conversation.model;
+    };
+
+    conversation.messages.push(assistantMessage);
+    renderAll();
+    scrollMessagesToBottom(true);
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let completed = false;
+
+    const processLine = (line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+
+      let event;
+
+      try {
+        event = JSON.parse(trimmed);
+      } catch {
+        throw new Error("وصلت بيانات غير صالحة من الخادم.");
+      }
+
+      if (event.type === "delta") {
+        assistantMessage.content += event.content || "";
+        conversation.updatedAt = new Date().toISOString();
+        scheduleStreamRender();
+        return;
+      }
+
+      if (event.type === "done") {
+        completed = true;
+        conversation.model = event.model || conversation.model;
+        return;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.detail || "حدث خطأ أثناء بث الرد.");
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+
+      buffer += decoder.decode(value || new Uint8Array(), {
+        stream: !done,
+      });
+
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        processLine(line);
+      }
+
+      if (done) {
+        if (buffer.trim()) {
+          processLine(buffer);
+        }
+        break;
+      }
+    }
+
+    if (!completed && !assistantMessage.content.trim()) {
+      throw new Error("انتهى الاتصال من دون استلام رد.");
+    }
+
+    if (!assistantMessage.content.trim()) {
+      assistantMessage.content = "لم يُرجع النموذج نصًا.";
+    }
+
     conversation.updatedAt = new Date().toISOString();
     persistConversations();
     setConnection("متصل وآمن", "online");
   } catch (error) {
+    if (assistantMessage && !assistantMessage.content.trim()) {
+      conversation.messages = conversation.messages.filter(
+        (message) => message !== assistantMessage,
+      );
+    }
+
+    persistConversations();
+
     if (error.status === 401) {
       state.gatewayKey = "";
       clearSavedGatewayKey();
-      showAuthentication("انتهت صلاحية مفتاح الدخول أو تم تغييره.");
+      showAuthentication(
+        "انتهت صلاحية مفتاح الدخول أو تم تغييره.",
+      );
     } else {
       showToast(humanizeError(error, "تعذر إرسال الرسالة."));
       setConnection("حدث خطأ في الطلب", "offline");
@@ -637,6 +748,8 @@ async function sendCurrentMessage() {
   } finally {
     state.isSending = false;
     dom.sendButton.disabled = false;
+
+    persistConversations();
     renderAll();
     scrollMessagesToBottom(true);
     dom.messageInput.focus();
