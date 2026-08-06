@@ -1,6 +1,7 @@
 import logging
+import secrets
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.config import settings
@@ -18,6 +19,28 @@ app = FastAPI(
 kimi_service = KimiService()
 
 
+def require_gateway_api_key(
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> None:
+    configured_key = settings.gateway_api_key.strip()
+
+    if not configured_key:
+        logger.error("GATEWAY_API_KEY is not configured.")
+        raise HTTPException(
+            status_code=503,
+            detail="API protection is not configured.",
+        )
+
+    if x_api_key is None or not secrets.compare_digest(
+        x_api_key,
+        configured_key,
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key.",
+        )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {
@@ -26,7 +49,7 @@ async def health() -> dict[str, str]:
     }
 
 
-@app.get("/models")
+@app.get("/models", dependencies=[Depends(require_gateway_api_key)])
 async def models() -> dict[str, list[str]]:
     try:
         return {"models": await kimi_service.list_models()}
@@ -50,7 +73,11 @@ async def models() -> dict[str, list[str]]:
         ) from exc
 
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(require_gateway_api_key)],
+)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
         response = await kimi_service.chat(request.message)

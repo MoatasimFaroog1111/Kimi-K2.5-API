@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     kimi_api_key: str
     kimi_base_url: str = "https://api.moonshot.ai/v1"
     kimi_model: str = "kimi-k2.5"
+    gateway_api_key: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
