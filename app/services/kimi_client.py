@@ -12,6 +12,10 @@ class KimiService:
             max_retries=2,
         )
 
+    async def list_models(self) -> list[str]:
+        models = await self._client.models.list()
+        return sorted(model.id for model in models.data)
+
     async def chat(self, message: str) -> str:
         completion = await self._client.chat.completions.create(
             model=settings.kimi_model,
