@@ -17,3 +17,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     model: str
+
+
+class AgentRequest(ChatRequest):
+    history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+
+
+class ProposalResponse(BaseModel):
+    proposal: dict
