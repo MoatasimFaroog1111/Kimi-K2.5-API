@@ -1,7 +1,10 @@
 import logging
 import secrets
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from app.config import settings
@@ -11,10 +14,13 @@ from app.services.kimi_client import KimiService
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 app = FastAPI(
-    title="Kimi K2.5 API Gateway",
-    version="1.0.0",
+    title="Kimi Coding Workspace API",
+    version="2.0.0",
 )
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 kimi_service = KimiService()
 
@@ -41,11 +47,17 @@ def require_gateway_api_key(
         )
 
 
+@app.get("/", include_in_schema=False, response_class=FileResponse)
+async def workspace() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
         "model": settings.kimi_model,
+        "version": app.version,
     }
 
 
@@ -79,8 +91,21 @@ async def models() -> dict[str, list[str]]:
     dependencies=[Depends(require_gateway_api_key)],
 )
 async def chat(request: ChatRequest) -> ChatResponse:
+    selected_model = request.model or settings.kimi_model
+
     try:
-        response = await kimi_service.chat(request.message)
+        available_models = await kimi_service.list_models()
+        if selected_model not in available_models:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{selected_model}' is not available for this account.",
+            )
+
+        response = await kimi_service.chat(
+            request.message,
+            model=selected_model,
+            history=[message.model_dump() for message in request.history],
+        )
 
         if not response:
             raise HTTPException(
@@ -90,7 +115,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
         return ChatResponse(
             response=response,
-            model=settings.kimi_model,
+            model=selected_model,
         )
 
     except APITimeoutError as exc:
