@@ -26,6 +26,30 @@ async def health() -> dict[str, str]:
     }
 
 
+@app.get("/models")
+async def models() -> dict[str, list[str]]:
+    try:
+        return {"models": await kimi_service.list_models()}
+    except APITimeoutError as exc:
+        logger.exception("Kimi models request timed out.")
+        raise HTTPException(
+            status_code=504,
+            detail="Kimi models request timed out.",
+        ) from exc
+    except APIConnectionError as exc:
+        logger.exception("Could not connect to Kimi models API.")
+        raise HTTPException(
+            status_code=502,
+            detail="Could not connect to Kimi models API.",
+        ) from exc
+    except APIStatusError as exc:
+        logger.exception("Kimi models API returned status %s.", exc.status_code)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Kimi models API returned status {exc.status_code}.",
+        ) from exc
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
