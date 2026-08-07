@@ -24,7 +24,7 @@ class AgentModeController {
       undo: () => this.undo(),
     });
 
-    this.#installModeSwitch();
+    this.#wireModeSwitch();
     this.#bindInterceptors();
     this.setMode(this.store.mode, false);
     this.component.render(this.store.state);
@@ -33,26 +33,36 @@ class AgentModeController {
   async setMode(mode, notify = true) {
     const normalized = mode === "agent" ? "agent" : "chat";
     this.store.setMode(normalized);
+    document.documentElement.dataset.workspaceMode = normalized;
     const isAgent = normalized === "agent";
     this.root.hidden = !isAgent;
     this.messages.hidden = isAgent;
-    this.switch.querySelectorAll("button").forEach((button) => {
-      button.classList.toggle("active", button.dataset.mode === normalized);
-      button.setAttribute("aria-pressed", String(button.dataset.mode === normalized));
+
+    this.switch.querySelectorAll("button[data-mode]").forEach((button) => {
+      const active = button.dataset.mode === normalized;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
     });
+
     this.input.placeholder = isAgent
       ? "صف المهمة التي تريد من الوكيل تنفيذها على المشروع…"
-      : "اكتب طلبك البرمجي هنا…";
+      : "اسأل Kimi أي شيء…";
+
     if (isAgent) {
-      this.title.textContent = "Agent Mode · تنفيذ بموافقتك";
+      this.title.textContent = "Agent Mode";
       await this.refreshStatus();
       this.input.focus();
     } else {
-      this.title.textContent = document.querySelector(
-        ".conversation-item.active .conversation-name",
-      )?.textContent || "محادثة جديدة";
+      this.title.textContent = window.kimiChat?.store.activeConversation?.title || "محادثة جديدة";
     }
-    if (notify) this.#toast(isAgent ? "تم تفعيل وضع الوكيل." : "تم تفعيل وضع المحادثة.");
+
+    window.dispatchEvent(new CustomEvent("kimi:mode-change", {
+      detail: { mode: normalized },
+    }));
+
+    if (notify) {
+      this.#toast(isAgent ? "تم تفعيل وضع الوكيل." : "تم تفعيل وضع المحادثة.");
+    }
   }
 
   async refreshStatus() {
@@ -116,19 +126,28 @@ class AgentModeController {
   async approve() {
     const proposal = this.store.state.proposal;
     if (!proposal?.id || !proposal.can_approve) return;
-    await this.#proposalAction("جارٍ إنشاء فرع وPull Request…", () => this.api.approve(proposal.id));
+    await this.#proposalAction(
+      "جارٍ إنشاء فرع وPull Request…",
+      () => this.api.approve(proposal.id),
+    );
   }
 
   async reject() {
     const proposal = this.store.state.proposal;
     if (!proposal?.id || !proposal.can_approve) return;
-    await this.#proposalAction("جارٍ رفض المقترح…", () => this.api.reject(proposal.id));
+    await this.#proposalAction(
+      "جارٍ رفض المقترح…",
+      () => this.api.reject(proposal.id),
+    );
   }
 
   async undo() {
     const proposal = this.store.state.proposal;
     if (!proposal?.id || proposal.status !== "applied") return;
-    await this.#proposalAction("جارٍ إغلاق Pull Request وحذف الفرع…", () => this.api.undo(proposal.id));
+    await this.#proposalAction(
+      "جارٍ إغلاق Pull Request وحذف الفرع…",
+      () => this.api.undo(proposal.id),
+    );
   }
 
   #handleEvent(event) {
@@ -173,19 +192,17 @@ class AgentModeController {
     }
   }
 
-  #installModeSwitch() {
+  #wireModeSwitch() {
     this.switch = document.getElementById("workspaceModeSwitch");
-
     if (!this.switch) {
       this.switch = document.createElement("div");
       this.switch.id = "workspaceModeSwitch";
       this.switch.className = "workspace-mode-switch";
-      this.switch.setAttribute("aria-label", "اختيار وضع مساحة العمل");
       this.switch.innerHTML = `
         <button type="button" data-mode="chat">محادثة</button>
         <button type="button" data-mode="agent">وكيل</button>
       `;
-      document.querySelector(".topbar-actions")?.prepend(this.switch);
+      document.querySelector(".composer-control-row")?.prepend(this.switch);
     }
 
     this.switch.addEventListener("click", (event) => {
@@ -231,12 +248,12 @@ class AgentModeController {
   }
 }
 
-function bootAgentMode() {
-  new AgentModeController();
+function bootAgent() {
+  window.kimiAgent = new AgentModeController();
 }
 
 if (document.readyState === "loading") {
-  window.addEventListener("DOMContentLoaded", bootAgentMode, { once: true });
+  window.addEventListener("DOMContentLoaded", bootAgent, { once: true });
 } else {
-  bootAgentMode();
+  bootAgent();
 }
