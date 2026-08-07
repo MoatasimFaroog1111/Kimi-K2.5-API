@@ -338,53 +338,32 @@
 }
 
 @media (max-width: 760px) {
-  .topbar {
-    flex-wrap: wrap;
-    align-content: flex-start;
-    gap: 8px;
-    min-height: auto;
-    padding: 8px 10px 10px;
-  }
-
-  .topbar-start,
-  .topbar-actions {
-    width: 100%;
-  }
-
-  .topbar-start {
-    min-height: 36px;
-  }
-
-  .topbar-actions {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 36px 36px;
-    gap: 6px;
-  }
-
-  .topbar-actions .model-picker {
-    width: 100%;
-    min-width: 0;
-  }
-
   .workspace-mode-switch {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    width: 100%;
-    order: initial;
+    position: fixed;
+    z-index: 95;
+    left: 50%;
+    bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+    width: min(340px, calc(100vw - 24px));
+    transform: translateX(-50%);
+    padding: 5px;
+    border-color: var(--border-strong, rgba(148, 163, 184, 0.32));
+    background: color-mix(in srgb, var(--bg-solid, #101827) 94%, transparent);
+    box-shadow: 0 14px 38px rgba(2, 6, 23, 0.28);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
   }
 
   .workspace-mode-switch button {
     flex: 1 1 50%;
-    min-height: 36px;
-    padding: 7px 10px;
+    min-height: 38px;
+    padding: 8px 12px;
     font-size: 13px;
-  }
-
-  .conversation-heading p {
-    max-width: 66vw;
+    font-weight: 800;
   }
 
   .agent-workspace {
+    width: min(100% - 16px, 1120px);
     margin-top: 10px;
+    padding-bottom: 74px;
   }
 }
