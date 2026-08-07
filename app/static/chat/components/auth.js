@@ -23,10 +23,9 @@ export class AuthComponent {
 
     this.toggle.addEventListener("click", () => {
       this.input.type = this.input.type === "password" ? "text" : "password";
-      this.toggle.setAttribute(
-        "aria-label",
-        this.input.type === "password" ? "إظهار المفتاح" : "إخفاء المفتاح",
-      );
+      const revealing = this.input.type === "text";
+      this.toggle.textContent = revealing ? "إخفاء" : "إظهار";
+      this.toggle.setAttribute("aria-label", revealing ? "إخفاء المفتاح" : "إظهار المفتاح");
     });
   }
 
@@ -41,6 +40,9 @@ export class AuthComponent {
     this.overlay.classList.add("hidden");
     this.appShell.classList.remove("is-locked");
     this.input.value = "";
+    this.input.type = "password";
+    this.toggle.textContent = "إظهار";
+    this.toggle.setAttribute("aria-label", "إظهار المفتاح");
     this.setError("");
   }
 
