@@ -7,7 +7,7 @@
   <meta name="description" content="واجهة محادثة ووكيل برمجي آمن لنماذج Kimi">
   <title>Kimi Coding Workspace</title>
   <link rel="stylesheet" href="/static/styles.css?v=2">
-  <link rel="stylesheet" href="/static/agent/agent.css?v=3">
+  <link rel="stylesheet" href="/static/agent/agent.css?v=4">
 </head>
 <body>
   <div class="ambient ambient-one" aria-hidden="true"></div>
@@ -103,6 +103,10 @@
         </div>
 
         <div class="topbar-actions">
+          <div id="workspaceModeSwitch" class="workspace-mode-switch" aria-label="اختيار وضع مساحة العمل">
+            <button type="button" data-mode="chat" aria-pressed="true">محادثة</button>
+            <button type="button" data-mode="agent" aria-pressed="false">وكيل</button>
+          </div>
           <label class="model-picker" for="modelSelect">
             <span>النموذج</span>
             <select id="modelSelect" aria-label="اختيار نموذج Kimi"></select>
@@ -140,6 +144,6 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="/static/app.js?v=3" defer></script>
-  <script type="module" src="/static/agent/main.js?v=2"></script>
+  <script type="module" src="/static/agent/main.js?v=3"></script>
 </body>
 </html>
