@@ -174,18 +174,24 @@ class AgentModeController {
   }
 
   #installModeSwitch() {
-    this.switch = document.createElement("div");
-    this.switch.className = "workspace-mode-switch";
-    this.switch.setAttribute("aria-label", "اختيار وضع مساحة العمل");
-    this.switch.innerHTML = `
-      <button type="button" data-mode="chat">محادثة</button>
-      <button type="button" data-mode="agent">وكيل</button>
-    `;
+    this.switch = document.getElementById("workspaceModeSwitch");
+
+    if (!this.switch) {
+      this.switch = document.createElement("div");
+      this.switch.id = "workspaceModeSwitch";
+      this.switch.className = "workspace-mode-switch";
+      this.switch.setAttribute("aria-label", "اختيار وضع مساحة العمل");
+      this.switch.innerHTML = `
+        <button type="button" data-mode="chat">محادثة</button>
+        <button type="button" data-mode="agent">وكيل</button>
+      `;
+      document.querySelector(".topbar-actions")?.prepend(this.switch);
+    }
+
     this.switch.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-mode]");
       if (button) this.setMode(button.dataset.mode);
     });
-    document.querySelector(".topbar-actions").prepend(this.switch);
   }
 
   #bindInterceptors() {
@@ -225,6 +231,12 @@ class AgentModeController {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+function bootAgentMode() {
   new AgentModeController();
-});
+}
+
+if (document.readyState === "loading") {
+  window.addEventListener("DOMContentLoaded", bootAgentMode, { once: true });
+} else {
+  bootAgentMode();
+}
