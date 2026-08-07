@@ -1,0 +1,15 @@
+.message-row.user .message-body {
+  margin-right: 0;
+  margin-left: auto;
+}
+
+html[data-workspace-mode="agent"] .kimi-welcome,
+html[data-workspace-mode="agent"] .message-row {
+  pointer-events: none;
+}
+
+@media (max-width: 760px) {
+  .message-row.user .message-body {
+    margin-left: auto;
+  }
+}
