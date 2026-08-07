@@ -1,0 +1,37 @@
+name: Frontend checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  javascript-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check frontend JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            echo "Checking ${file}"
+            node --check "${file}"
+          done < <(find app/static/chat app/static/agent -type f -name '*.js' -print0)
+
+      - name: Verify modular entry points
+        shell: bash
+        run: |
+          test -f app/static/chat/main.js
+          test -f app/static/chat/controller.js
+          test -f app/static/chat/store.js
+          test -f app/static/chat/api.js
+          grep -q '/static/chat/main.js' app/static/index.html
+          grep -q 'workspaceModeSwitch' app/static/index.html
