@@ -1,4 +1,3 @@
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,7 +9,7 @@ from app.infrastructure.isolated_validation_runner import IsolatedValidationRunn
 
 
 class FakeSnapshot:
-    async def materialize_snapshot(self, destination: Path) -> None:
+    async def materialize_snapshot(self, destination: Path, *, ref=None) -> None:
         (destination / "app").mkdir(parents=True, exist_ok=True)
         (destination / "tests").mkdir(parents=True, exist_ok=True)
         (destination / "app" / "__init__.py").write_text("", encoding="utf-8")
@@ -48,6 +47,7 @@ class AgentV3Tests(unittest.IsolatedAsyncioTestCase):
             ],
             profiles=("python-tests",),
             attempt=1,
+            base_ref="main",
         )
         self.assertTrue(result.passed)
         self.assertTrue(result.checks)
@@ -72,6 +72,7 @@ class AgentV3Tests(unittest.IsolatedAsyncioTestCase):
             ],
             profiles=("python-tests",),
             attempt=1,
+            base_ref="main",
         )
         self.assertFalse(result.passed)
         self.assertTrue(result.failed_checks)
@@ -83,7 +84,7 @@ class AgentV3Tests(unittest.IsolatedAsyncioTestCase):
             WorkspaceFile(
                 path="app/example.py",
                 content=(
-                    '"""Example module."""\n'
+                    '\"\"\"Example module.\"\"\"\n'
                     "import json\n\n"
                     "class Worker:\n"
                     "    def run(self):\n"
