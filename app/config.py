@@ -31,6 +31,19 @@ class Settings(BaseSettings):
     agent_browser_verification_enabled: bool = True
     agent_safe_runner_mode: str = "github-actions"
 
+    agent_v3_enabled: bool = True
+    agent_semantic_search_enabled: bool = True
+    agent_semantic_candidate_files: int = Field(default=12, ge=4, le=24)
+    agent_semantic_top_k: int = Field(default=8, ge=2, le=16)
+    agent_semantic_sample_chars: int = Field(default=1800, ge=500, le=5000)
+    agent_preapproval_validation_enabled: bool = True
+    agent_validation_repair_attempts: int = Field(default=2, ge=0, le=3)
+    agent_validation_timeout_seconds: int = Field(default=90, ge=10, le=300)
+    agent_validation_log_chars: int = Field(default=8000, ge=1000, le=20000)
+    agent_snapshot_max_download_bytes: int = Field(default=25_000_000, ge=1_000_000, le=100_000_000)
+    agent_ci_feedback_enabled: bool = True
+    agent_ci_log_chars: int = Field(default=8000, ge=1000, le=20000)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
