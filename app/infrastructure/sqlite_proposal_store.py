@@ -57,6 +57,21 @@ class SQLiteProposalStore:
             raise ProposalNotFoundError("Stored proposal is invalid.") from exc
         return self._deserialize(payload)
 
+    def recent(self, *, limit: int = 50) -> list[ChangeProposal]:
+        self._remove_expired()
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload_json FROM proposals ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        proposals: list[ChangeProposal] = []
+        for row in rows:
+            try:
+                proposals.append(self._deserialize(json.loads(row[0])))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        return proposals
+
     def _remove_expired(self) -> None:
         cutoff = (datetime.now(timezone.utc) - self._ttl).isoformat()
         with self._lock, self._connect() as connection:
@@ -103,6 +118,9 @@ class SQLiteProposalStore:
             "pull_request_number": proposal.pull_request_number,
             "run_id": proposal.run_id,
             "knowledge_ids": list(proposal.knowledge_ids),
+            "approved_paths": list(proposal.approved_paths),
+            "applied_paths": list(proposal.applied_paths),
+            "parent_proposal_id": proposal.parent_proposal_id,
             "plan": {
                 "summary": proposal.plan.summary,
                 "steps": list(proposal.plan.steps),
@@ -323,4 +341,7 @@ class SQLiteProposalStore:
             knowledge_ids=tuple(payload.get("knowledge_ids") or []),
             sandbox_validation=sandbox,
             ci_feedback=ci_feedback,
+            approved_paths=tuple(payload.get("approved_paths") or []),
+            applied_paths=tuple(payload.get("applied_paths") or []),
+            parent_proposal_id=payload.get("parent_proposal_id"),
         )
