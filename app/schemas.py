@@ -21,6 +21,16 @@ class ChatResponse(BaseModel):
 
 class AgentRequest(ChatRequest):
     history: list[ChatMessage] = Field(default_factory=list, max_length=20)
+    auto_model: bool = True
+
+
+class FileApprovalRequest(BaseModel):
+    paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+class CiRepairRequest(BaseModel):
+    model: str | None = Field(default=None, min_length=1, max_length=100)
+    auto_model: bool = True
 
 
 class ProposalResponse(BaseModel):
