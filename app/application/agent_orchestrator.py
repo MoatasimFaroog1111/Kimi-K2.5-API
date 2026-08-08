@@ -7,7 +7,9 @@ from app.application.audit_service import AgentAuditService
 from app.application.change_validator import ChangeValidationService
 from app.application.code_search_service import CodeSearchService
 from app.application.knowledge_service import ProjectKnowledgeService
+from app.application.preapproval_validation_service import PreApprovalValidationService
 from app.application.security_service import AgentSecurityService
+from app.application.semantic_search_service import SemanticCodeIntelligence
 from app.application.workflow_service import RepositoryWorkflowCatalog, WorkflowSelectionService
 from app.config import Settings
 from app.core.exceptions import AgentValidationError
@@ -30,6 +32,8 @@ class AgentOrchestrator:
         knowledge: ProjectKnowledgeService,
         audit: AgentAuditService,
         code_search: CodeSearchService,
+        semantic: SemanticCodeIntelligence,
+        preapproval: PreApprovalValidationService,
         workflows: RepositoryWorkflowCatalog,
         workflow_selection: WorkflowSelectionService,
         config: Settings,
@@ -45,6 +49,8 @@ class AgentOrchestrator:
         self._knowledge = knowledge
         self._audit = audit
         self._code_search = code_search
+        self._semantic = semantic
+        self._preapproval = preapproval
         self._workflows = workflows
         self._workflow_selection = workflow_selection
         self._config = config
@@ -61,14 +67,14 @@ class AgentOrchestrator:
         self._audit.record(
             run_id=run_id,
             event_type="run.started",
-            message="Agent Core V2 run started.",
+            message="Agent Intelligence V3 run started.",
             metadata={"repository": status.repository or "", "model": model},
         )
         yield {
             "type": "run",
             "run_id": run_id,
             "stage": "started",
-            "message": "Agent Core V2 started.",
+            "message": "Agent Intelligence V3 started.",
         }
 
         knowledge_items = (
@@ -100,26 +106,59 @@ class AgentOrchestrator:
         candidates = self._code_search.rank_paths(
             task,
             tree,
-            limit=max(self._config.agent_max_read_files * 2, 12),
+            limit=max(self._config.agent_semantic_candidate_files, self._config.agent_max_read_files),
         )
         self._audit.record(
             run_id=run_id,
             event_type="search.completed",
-            message="Repository path search completed.",
-            metadata={"candidate_paths": candidates[:12], "tree_size": len(tree)},
+            message="Deterministic repository path search completed.",
+            metadata={"candidate_paths": candidates[:16], "tree_size": len(tree)},
         )
         yield {
             "type": "search",
             "stage": "discovery",
-            "candidates": candidates[:12],
-            "message": f"تم ترشيح {min(len(candidates), 12)} مسارًا مرتبطًا بالمهمة.",
+            "candidates": candidates[:16],
+            "message": f"تم ترشيح {min(len(candidates), 16)} مسارًا أوليًا مرتبطًا بالمهمة.",
         }
 
+        semantic_hits = []
+        if self._config.agent_semantic_search_enabled:
+            semantic_files = await self._workspace.read_files(
+                candidates[: self._config.agent_semantic_candidate_files]
+            )
+            semantic_hits = await self._semantic.rank(
+                task=task,
+                files=semantic_files,
+                model=model,
+                limit=self._config.agent_semantic_top_k,
+                sample_chars=self._config.agent_semantic_sample_chars,
+            )
+            self._audit.record(
+                run_id=run_id,
+                event_type="semantic.completed",
+                message=f"Semantic code intelligence ranked {len(semantic_hits)} file(s).",
+                metadata={
+                    "hits": [
+                        {"path": hit.path, "score": hit.score}
+                        for hit in semantic_hits
+                    ]
+                },
+            )
+            yield {
+                "type": "semantic",
+                "stage": "semantic",
+                "hits": self._semantic.serialize(semantic_hits),
+                "message": f"حلل الوكيل بنية ومحتوى {len(semantic_hits)} ملفات دلاليًا.",
+            }
+
+        semantic_paths = [hit.path for hit in semantic_hits]
+        planner_candidates = list(dict.fromkeys([*semantic_paths, *candidates]))
         plan = await self._planner.plan(
             task=task,
             history=history,
             tree=tree,
-            search_candidates=candidates,
+            search_candidates=planner_candidates,
+            semantic_hits=semantic_hits,
             knowledge=knowledge_items,
             model=model,
             max_read_files=self._config.agent_max_read_files,
@@ -193,23 +232,23 @@ class AgentOrchestrator:
             knowledge=knowledge_items,
             model=model,
         )
-        repair_attempt = 0
+        review_repair_attempt = 0
         while (
             not review.approved
             and review.required_changes
-            and repair_attempt < self._config.agent_review_repair_attempts
+            and review_repair_attempt < self._config.agent_review_repair_attempts
         ):
-            repair_attempt += 1
+            review_repair_attempt += 1
             self._audit.record(
                 run_id=run_id,
                 event_type="review.repair_requested",
-                message=f"Reviewer requested repair attempt {repair_attempt}.",
+                message=f"Reviewer requested repair attempt {review_repair_attempt}.",
                 metadata={"required_changes": list(review.required_changes)},
             )
             yield {
                 "type": "status",
                 "stage": "repair",
-                "message": f"Reviewer requested corrections; running repair attempt {repair_attempt}.",
+                "message": f"Reviewer requested corrections; running repair attempt {review_repair_attempt}.",
             }
             assistant_message, raw_changes = await self._coder.implement(
                 task=task,
@@ -273,15 +312,6 @@ class AgentOrchestrator:
             model=model,
         )
         available_workflows = await self._workflows.list_workflows()
-        self._audit.record(
-            run_id=run_id,
-            event_type="tester.completed",
-            message="Tester produced a validation plan.",
-            metadata={
-                "profiles": list(validation.workflow_profiles),
-                "browser_required": validation.browser_required,
-            },
-        )
         yield {
             "type": "validation",
             "stage": "testing",
@@ -289,8 +319,141 @@ class AgentOrchestrator:
             "workflow_profiles": list(validation.workflow_profiles),
             "browser_required": validation.browser_required,
             "available_workflows": [workflow.name for workflow in available_workflows],
-            "runner": self._config.agent_safe_runner_mode,
+            "runner": "pre-approval-sandbox + github-actions",
         }
+
+        sandbox_result = None
+        if self._config.agent_preapproval_validation_enabled:
+            validation_attempt = 1
+            while True:
+                self._audit.record(
+                    run_id=run_id,
+                    event_type="sandbox.started",
+                    message=f"Pre-approval validation attempt {validation_attempt} started.",
+                    metadata={"profiles": list(validation.workflow_profiles)},
+                )
+                yield {
+                    "type": "status",
+                    "stage": "sandbox",
+                    "message": f"Running isolated pre-approval validation attempt {validation_attempt}.",
+                }
+                sandbox_result = await self._preapproval.validate(
+                    changes=changes,
+                    profiles=validation.workflow_profiles,
+                    attempt=validation_attempt,
+                )
+                self._audit.record(
+                    run_id=run_id,
+                    event_type="sandbox.completed",
+                    message=(
+                        "Pre-approval validation passed."
+                        if sandbox_result.passed
+                        else "Pre-approval validation failed."
+                    ),
+                    metadata={
+                        "attempt": validation_attempt,
+                        "passed": sandbox_result.passed,
+                        "failed_checks": [
+                            check.name for check in sandbox_result.failed_checks
+                        ],
+                    },
+                )
+                yield {
+                    "type": "sandbox_validation",
+                    "stage": "sandbox",
+                    **self._preapproval.serialize(sandbox_result),
+                }
+                if sandbox_result.passed:
+                    break
+
+                feedback = self._preapproval.repair_feedback(sandbox_result)
+                if (
+                    not feedback
+                    or validation_attempt > self._config.agent_validation_repair_attempts
+                ):
+                    yield {
+                        "type": "delta",
+                        "content": "Pre-approval validation still has blocking failures, so no approval proposal was created.",
+                    }
+                    yield {
+                        "type": "done",
+                        "model": model,
+                        "proposal_id": None,
+                        "run_id": run_id,
+                        "validation_blocked": True,
+                    }
+                    return
+
+                yield {
+                    "type": "status",
+                    "stage": "auto-repair",
+                    "message": f"Validation failed; Coder is repairing the root cause automatically ({validation_attempt}/{self._config.agent_validation_repair_attempts}).",
+                }
+                assistant_message, raw_changes = await self._coder.implement(
+                    task=task,
+                    plan=plan,
+                    tree=tree,
+                    files=files,
+                    knowledge=knowledge_items,
+                    review_feedback=feedback,
+                    model=model,
+                    max_tokens=self._config.agent_max_output_tokens,
+                )
+                changes = self._validator.validate(raw_changes, tree=tree, files=files)
+                risk = self._security.assess(task=task, changes=changes)
+                if risk.blocked:
+                    raise AgentValidationError("Security policy blocked the validation repair.")
+                review = await self._reviewer.review(
+                    task=task,
+                    plan=plan,
+                    files=files,
+                    changes=changes,
+                    risk=risk,
+                    knowledge=knowledge_items,
+                    model=model,
+                )
+                if not review.approved:
+                    yield {
+                        "type": "review",
+                        "stage": "review",
+                        "approved": review.approved,
+                        "score": review.score,
+                        "findings": list(review.findings),
+                        "required_changes": list(review.required_changes),
+                    }
+                    yield {
+                        "type": "delta",
+                        "content": "The repaired code did not pass independent review, so no approval proposal was created.",
+                    }
+                    yield {
+                        "type": "done",
+                        "model": model,
+                        "proposal_id": None,
+                        "run_id": run_id,
+                        "review_blocked": True,
+                    }
+                    return
+                changed_paths = [change.path for change in changes]
+                suggested_profiles = self._workflow_selection.select_profiles(changed_paths)
+                validation = await self._tester.validation_plan(
+                    task=task,
+                    changes=changes,
+                    review=review,
+                    suggested_profiles=suggested_profiles,
+                    model=model,
+                )
+                validation_attempt += 1
+
+        self._audit.record(
+            run_id=run_id,
+            event_type="tester.completed",
+            message="Tester and pre-approval validation completed.",
+            metadata={
+                "profiles": list(validation.workflow_profiles),
+                "browser_required": validation.browser_required,
+                "sandbox_passed": sandbox_result.passed if sandbox_result else None,
+            },
+        )
 
         proposal = ChangeProposal(
             id=uuid4().hex[:16],
@@ -305,12 +468,13 @@ class AgentOrchestrator:
             validation=validation,
             risk=risk,
             knowledge_ids=tuple(item.id for item in knowledge_items),
+            sandbox_validation=sandbox_result,
         )
         self._proposals.save(proposal)
         self._audit.record(
             run_id=run_id,
             event_type="proposal.created",
-            message="Reviewed proposal is waiting for explicit user approval.",
+            message="Reviewed and sandbox-validated proposal is waiting for explicit user approval.",
             metadata={"proposal_id": proposal.id, "files": changed_paths},
         )
 
