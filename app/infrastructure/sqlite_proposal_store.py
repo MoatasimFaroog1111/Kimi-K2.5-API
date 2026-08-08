@@ -12,6 +12,13 @@ from app.domain.agent import (
     ProposedFileChange,
 )
 from app.domain.agent_v2 import ReviewResult, RiskAssessment, RiskLevel, ValidationPlan
+from app.domain.agent_v3 import (
+    CiFeedback,
+    CiJobFeedback,
+    SandboxValidationResult,
+    ValidationCheckResult,
+    ValidationCheckStatus,
+)
 
 
 class SQLiteProposalStore:
@@ -137,6 +144,44 @@ class SQLiteProposalStore:
                 }
                 if proposal.risk else None
             ),
+            "sandbox_validation": (
+                {
+                    "passed": proposal.sandbox_validation.passed,
+                    "attempt": proposal.sandbox_validation.attempt,
+                    "repairable": proposal.sandbox_validation.repairable,
+                    "checks": [
+                        {
+                            "name": check.name,
+                            "status": check.status.value,
+                            "command": list(check.command),
+                            "output": check.output,
+                            "return_code": check.return_code,
+                            "duration_ms": check.duration_ms,
+                        }
+                        for check in proposal.sandbox_validation.checks
+                    ],
+                }
+                if proposal.sandbox_validation else None
+            ),
+            "ci_feedback": (
+                {
+                    "status": proposal.ci_feedback.status,
+                    "conclusion": proposal.ci_feedback.conclusion,
+                    "checked_at": proposal.ci_feedback.checked_at.isoformat(),
+                    "jobs": [
+                        {
+                            "name": job.name,
+                            "status": job.status,
+                            "conclusion": job.conclusion,
+                            "url": job.url,
+                            "failed_steps": list(job.failed_steps),
+                            "log_excerpt": job.log_excerpt,
+                        }
+                        for job in proposal.ci_feedback.jobs
+                    ],
+                }
+                if proposal.ci_feedback else None
+            ),
         }
 
     @staticmethod
@@ -193,6 +238,61 @@ class SQLiteProposalStore:
                 blocked=bool(risk_payload.get("blocked")),
             )
 
+        sandbox_payload = payload.get("sandbox_validation")
+        sandbox = None
+        if isinstance(sandbox_payload, dict):
+            sandbox_checks: list[ValidationCheckResult] = []
+            for item in sandbox_payload.get("checks") or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    status_value = ValidationCheckStatus(str(item.get("status") or "skipped"))
+                except ValueError:
+                    status_value = ValidationCheckStatus.SKIPPED
+                sandbox_checks.append(
+                    ValidationCheckResult(
+                        name=str(item.get("name") or "check"),
+                        status=status_value,
+                        command=tuple(item.get("command") or []),
+                        output=str(item.get("output") or ""),
+                        return_code=item.get("return_code"),
+                        duration_ms=int(item.get("duration_ms") or 0),
+                    )
+                )
+            sandbox = SandboxValidationResult(
+                passed=bool(sandbox_payload.get("passed")),
+                attempt=int(sandbox_payload.get("attempt") or 1),
+                checks=tuple(sandbox_checks),
+                repairable=bool(sandbox_payload.get("repairable", True)),
+            )
+
+        ci_payload = payload.get("ci_feedback")
+        ci_feedback = None
+        if isinstance(ci_payload, dict):
+            jobs = tuple(
+                CiJobFeedback(
+                    name=str(item.get("name") or "job"),
+                    status=str(item.get("status") or "queued"),
+                    conclusion=item.get("conclusion"),
+                    url=item.get("url"),
+                    failed_steps=tuple(item.get("failed_steps") or []),
+                    log_excerpt=str(item.get("log_excerpt") or ""),
+                )
+                for item in ci_payload.get("jobs") or []
+                if isinstance(item, dict)
+            )
+            checked_raw = str(ci_payload.get("checked_at") or "")
+            try:
+                checked_at = datetime.fromisoformat(checked_raw)
+            except ValueError:
+                checked_at = datetime.now(timezone.utc)
+            ci_feedback = CiFeedback(
+                status=str(ci_payload.get("status") or "queued"),
+                conclusion=ci_payload.get("conclusion"),
+                jobs=jobs,
+                checked_at=checked_at,
+            )
+
         created_raw = str(payload.get("created_at") or "")
         try:
             created_at = datetime.fromisoformat(created_raw)
@@ -221,4 +321,6 @@ class SQLiteProposalStore:
             validation=validation,
             risk=risk,
             knowledge_ids=tuple(payload.get("knowledge_ids") or []),
+            sandbox_validation=sandbox,
+            ci_feedback=ci_feedback,
         )
