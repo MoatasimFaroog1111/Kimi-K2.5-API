@@ -4,6 +4,7 @@ from typing import Any
 
 from app.application.agent_orchestrator import AgentOrchestrator
 from app.application.audit_service import AgentAuditService
+from app.application.ci_feedback_service import CiFeedbackService
 from app.application.code_search_service import CodeSearchService
 from app.application.knowledge_service import ProjectKnowledgeService
 from app.application.prompts import AGENT_STANDALONE_SYSTEM_PROMPT
@@ -26,6 +27,7 @@ class AgentApplicationService:
         audit: AgentAuditService,
         workflows: RepositoryWorkflowCatalog,
         code_search: CodeSearchService,
+        ci_feedback: CiFeedbackService,
         config: Settings,
     ) -> None:
         self._model = model
@@ -36,6 +38,7 @@ class AgentApplicationService:
         self._audit = audit
         self._workflows = workflows
         self._code_search = code_search
+        self._ci_feedback = ci_feedback
         self._config = config
 
     async def status(self) -> dict[str, Any]:
@@ -47,24 +50,32 @@ class AgentApplicationService:
             "write_enabled": status.write_enabled,
             "mode": status.mode,
             "approval_required": True,
-            "sandbox": "github-pull-request",
-            "agent_core_version": "2",
+            "sandbox": "isolated-preapproval + github-pull-request",
+            "agent_core_version": "3",
             "multi_agent": self._config.agent_v2_enabled,
-            "roles": ["planner", "coder", "reviewer", "tester"],
+            "semantic_intelligence": self._config.agent_semantic_search_enabled,
+            "preapproval_validation": self._config.agent_preapproval_validation_enabled,
+            "ci_feedback": self._config.agent_ci_feedback_enabled,
+            "roles": ["semantic", "planner", "coder", "reviewer", "tester"],
             "memory": {
                 "enabled": self._config.agent_knowledge_enabled,
                 "backend": "sqlite",
                 "path": self._config.agent_state_db_path,
             },
-            "safe_runner": self._config.agent_safe_runner_mode,
+            "safe_runner": "isolated-allowlist",
+            "post_approval_runner": self._config.agent_safe_runner_mode,
             "browser_verification": self._config.agent_browser_verification_enabled,
             "capabilities": [
                 "project-memory",
                 "knowledge-retrieval",
                 "codebase-path-search",
+                "semantic-code-intelligence",
                 "multi-agent-review",
                 "security-risk-gate",
+                "preapproval-sandbox",
+                "automatic-validation-repair",
                 "workflow-catalog",
+                "ci-feedback",
                 "browser-smoke-planning",
                 "audit-log",
                 "pull-request-approval",
@@ -142,11 +153,18 @@ class AgentApplicationService:
             raise ProposalStateError("Independent review has not approved this proposal.")
         if proposal.risk and proposal.risk.blocked:
             raise ProposalStateError("Security policy blocks this proposal.")
+        if (
+            self._config.agent_preapproval_validation_enabled
+            and (not proposal.sandbox_validation or not proposal.sandbox_validation.passed)
+        ):
+            raise ProposalStateError(
+                "Pre-approval sandbox validation has not passed this proposal."
+            )
 
         self._audit.record(
             run_id=proposal.run_id or proposal.id,
             event_type="proposal.approval_requested",
-            message="User explicitly approved the proposal.",
+            message="User explicitly approved the sandbox-validated proposal.",
             metadata={"proposal_id": proposal.id},
         )
         try:
@@ -169,6 +187,8 @@ class AgentApplicationService:
                 validation=applied.validation,
             )
             applied.knowledge_ids = tuple(dict.fromkeys([*applied.knowledge_ids, item.id]))
+        if self._config.agent_ci_feedback_enabled:
+            applied.ci_feedback = await self._ci_feedback.feedback(applied)
         self._proposals.save(applied)
         self._audit.record(
             run_id=applied.run_id or applied.id,
@@ -178,6 +198,7 @@ class AgentApplicationService:
                 "proposal_id": applied.id,
                 "pull_request_url": applied.pull_request_url or "",
                 "knowledge_ids": list(applied.knowledge_ids),
+                "ci_status": applied.ci_feedback.status if applied.ci_feedback else "disabled",
             },
         )
         return self._serialize_proposal(applied, can_approve=False)
@@ -207,6 +228,25 @@ class AgentApplicationService:
             metadata={"proposal_id": undone.id},
         )
         return self._serialize_proposal(undone, can_approve=False)
+
+    async def proposal_ci(self, proposal_id: str) -> dict[str, Any]:
+        proposal = self._proposals.get(proposal_id)
+        if proposal.status is not ProposalStatus.APPLIED:
+            raise ProposalStateError("CI feedback is available only after a Pull Request exists.")
+        feedback = await self._ci_feedback.feedback(proposal)
+        proposal.ci_feedback = feedback
+        self._proposals.save(proposal)
+        self._audit.record(
+            run_id=proposal.run_id or proposal.id,
+            event_type="ci.feedback",
+            message=f"CI feedback updated: {feedback.status}/{feedback.conclusion or 'pending'}.",
+            metadata={
+                "proposal_id": proposal.id,
+                "status": feedback.status,
+                "conclusion": feedback.conclusion,
+            },
+        )
+        return self._ci_feedback.serialize(feedback)
 
     def memory(self, *, query: str = "", limit: int = 20) -> list[dict[str, object]]:
         items = (
@@ -243,6 +283,9 @@ class AgentApplicationService:
         review = proposal.review
         validation = proposal.validation
         risk = proposal.risk
+        sandbox = proposal.sandbox_validation
+        ci = proposal.ci_feedback
+        sandbox_passed = sandbox.passed if sandbox else False
         return {
             "id": proposal.id,
             "run_id": proposal.run_id,
@@ -250,7 +293,11 @@ class AgentApplicationService:
             "base_branch": proposal.base_branch,
             "summary": proposal.summary,
             "status": proposal.status.value,
-            "can_approve": can_approve and proposal.status is ProposalStatus.PENDING,
+            "can_approve": (
+                can_approve
+                and proposal.status is ProposalStatus.PENDING
+                and (sandbox_passed or sandbox is None)
+            ),
             "branch_name": proposal.branch_name,
             "pull_request_url": proposal.pull_request_url,
             "knowledge_ids": list(proposal.knowledge_ids),
@@ -273,6 +320,16 @@ class AgentApplicationService:
                 if validation
                 else None
             ),
+            "sandbox_validation": (
+                PreApprovalValidationService.serialize(sandbox)
+                if sandbox
+                else None
+            ),
+            "ci_feedback": (
+                CiFeedbackService.serialize(ci)
+                if ci
+                else None
+            ),
             "risk": (
                 {
                     "level": risk.level.value,
@@ -291,3 +348,6 @@ class AgentApplicationService:
                 for change in proposal.changes
             ],
         }
+
+
+from app.application.preapproval_validation_service import PreApprovalValidationService
