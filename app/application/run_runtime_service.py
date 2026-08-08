@@ -1,5 +1,3 @@
-from dataclasses import replace
-from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.config import Settings
@@ -131,7 +129,7 @@ class AgentRunRuntime:
         if not run_id:
             return
         run = self._runs.get(run_id)
-        if run.status in {RunStatus.WAITING_APPROVAL, RunStatus.CANCELLED}:
+        if run.status is RunStatus.WAITING_APPROVAL:
             run.status = RunStatus.COMPLETED
             run.stage = RunStage.COMPLETED
             self._runs.save(run)
