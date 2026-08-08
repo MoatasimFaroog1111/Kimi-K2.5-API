@@ -49,7 +49,7 @@ class AgentModeController {
       : "اسأل Kimi أي شيء…";
 
     if (isAgent) {
-      this.title.textContent = "Agent Mode";
+      this.title.textContent = "Agent Core V2";
       await this.refreshStatus();
       this.input.focus();
     } else {
@@ -61,7 +61,7 @@ class AgentModeController {
     }));
 
     if (notify) {
-      this.#toast(isAgent ? "تم تفعيل وضع الوكيل." : "تم تفعيل وضع المحادثة.");
+      this.#toast(isAgent ? "تم تفعيل Agent Core V2." : "تم تفعيل وضع المحادثة.");
     }
   }
 
@@ -81,13 +81,21 @@ class AgentModeController {
     if (!task || this.store.state.isRunning) return;
 
     const model = document.getElementById("modelSelect")?.value;
-    this.store.state.isRunning = true;
-    this.store.state.error = "";
-    this.store.state.result = "";
-    this.store.state.plan = null;
-    this.store.state.proposal = null;
+    Object.assign(this.store.state, {
+      isRunning: true,
+      error: "",
+      result: "",
+      runId: null,
+      plan: null,
+      knowledge: [],
+      searchCandidates: [],
+      security: null,
+      review: null,
+      validation: null,
+      proposal: null,
+    });
     this.store.addMessage("user", task);
-    this.store.addActivity("تم استلام المهمة وبدء دورة الوكيل.", "start");
+    this.store.addActivity("تم استلام المهمة وبدء دورة Agent Core V2.", "start");
     this.input.value = "";
     this.sendButton.disabled = true;
     this.component.render(this.store.state);
@@ -154,18 +162,54 @@ class AgentModeController {
     if (event.type === "status") {
       if (event.workspace) this.store.state.workspace = event.workspace;
       this.store.addActivity(event.message || event.stage, event.stage);
+    } else if (event.type === "run") {
+      this.store.state.runId = event.run_id || null;
+      this.store.addActivity(event.message || "بدأت دورة الوكيل.", "run");
+    } else if (event.type === "knowledge") {
+      this.store.state.knowledge = event.items || [];
+      this.store.addActivity(event.message || "تم فحص ذاكرة المشروع.", "memory");
+    } else if (event.type === "search") {
+      this.store.state.searchCandidates = event.candidates || [];
+      this.store.addActivity(event.message || "تم البحث داخل بنية المشروع.", "search");
     } else if (event.type === "plan") {
       this.store.state.plan = {
         summary: event.summary,
         steps: event.steps || [],
         files: event.files || [],
       };
-      this.store.addActivity("اكتملت خطة التنفيذ.", "plan");
+      this.store.addActivity("اكتملت خطة Planner.", "plan");
+    } else if (event.type === "security") {
+      this.store.state.security = {
+        level: event.level,
+        blocked: Boolean(event.blocked),
+        reasons: event.reasons || [],
+      };
+      this.store.addActivity(`اكتمل فحص الأمان: ${event.level}.`, "security");
+    } else if (event.type === "review") {
+      this.store.state.review = {
+        approved: Boolean(event.approved),
+        score: Number(event.score || 0),
+        findings: event.findings || [],
+        requiredChanges: event.required_changes || [],
+      };
+      this.store.addActivity(
+        `اكتملت مراجعة Reviewer بنتيجة ${event.score || 0}/100.`,
+        "review",
+      );
+    } else if (event.type === "validation") {
+      this.store.state.validation = {
+        checks: event.checks || [],
+        workflowProfiles: event.workflow_profiles || [],
+        browserRequired: Boolean(event.browser_required),
+        availableWorkflows: event.available_workflows || [],
+        runner: event.runner || "",
+      };
+      this.store.addActivity("أكمل Tester خطة التحقق والاختبارات.", "testing");
     } else if (event.type === "delta") {
       this.store.state.result += event.content || "";
     } else if (event.type === "approval_required") {
       this.store.state.proposal = event.proposal;
-      this.store.addActivity("التغييرات جاهزة وتنتظر موافقتك.", "approval");
+      this.store.addActivity("التغييرات اجتازت المراجعة وتنتظر موافقتك.", "approval");
     } else if (event.type === "done") {
       this.store.addActivity("اكتملت دورة الوكيل.", "done");
     }
