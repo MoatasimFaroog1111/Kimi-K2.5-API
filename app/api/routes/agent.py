@@ -88,7 +88,14 @@ async def cancel_run(
     run_id: str,
     service: AgentApplicationService = Depends(get_agent_service),
 ) -> dict:
-    return {"run": service.cancel_run(run_id)}
+    before = service.run_detail(run_id)
+    cancelled = service.cancel_run(run_id)
+    proposal = before.get("proposal")
+    if before.get("status") == "waiting-approval" and isinstance(proposal, dict):
+        proposal_id = proposal.get("id")
+        if proposal_id:
+            service.reject(str(proposal_id))
+    return {"run": service.run_detail(run_id) if cancelled.get("status") == "cancelled" else cancelled}
 
 
 @router.post("/runs/{run_id}/resume")
