@@ -1,3 +1,5 @@
+import json
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -44,6 +46,22 @@ class Settings(BaseSettings):
     agent_ci_feedback_enabled: bool = True
     agent_ci_log_chars: int = Field(default=8000, ge=1000, le=20000)
 
+    agent_v4_enabled: bool = True
+    agent_model_router_enabled: bool = True
+    agent_model_router_default: str = "kimi-k2.7-code"
+    agent_model_router_fast: str = "kimi-k2.7-code-highspeed"
+    agent_model_router_deep: str = "kimi-k3"
+    agent_context_target_chars: int = Field(default=180_000, ge=20_000, le=800_000)
+    agent_context_history_chars: int = Field(default=18_000, ge=2_000, le=100_000)
+    agent_context_knowledge_chars: int = Field(default=12_000, ge=1_000, le=100_000)
+    agent_run_token_budget: int = Field(default=60_000, ge=5_000, le=500_000)
+    agent_run_cost_budget_usd: float = Field(default=0.0, ge=0.0, le=1000.0)
+    agent_model_pricing_json: str = ""
+    agent_run_retention_days: int = Field(default=30, ge=1, le=365)
+    agent_recent_runs_limit: int = Field(default=50, ge=5, le=200)
+    agent_per_file_approval_enabled: bool = True
+    agent_ci_repair_enabled: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -57,6 +75,30 @@ class Settings(BaseSettings):
             for value in self.agent_allowed_path_prefixes.split(",")
             if value.strip()
         )
+
+    @property
+    def model_pricing(self) -> dict[str, dict[str, float]]:
+        if not self.agent_model_pricing_json.strip():
+            return {}
+        try:
+            payload = json.loads(self.agent_model_pricing_json)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        result: dict[str, dict[str, float]] = {}
+        for model, rates in payload.items():
+            if not isinstance(model, str) or not isinstance(rates, dict):
+                continue
+            try:
+                input_rate = float(rates.get("input", 0.0))
+                output_rate = float(rates.get("output", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if input_rate < 0 or output_rate < 0:
+                continue
+            result[model] = {"input": input_rate, "output": output_rate}
+        return result
 
 
 settings = Settings()
