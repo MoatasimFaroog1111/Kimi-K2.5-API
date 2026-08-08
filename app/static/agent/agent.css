@@ -10,7 +10,9 @@
 
 .agent-hero,
 .agent-status-bar,
+.agent-pipeline,
 .agent-grid,
+.agent-activity-card,
 .agent-result-card,
 .agent-proposal-card {
   width: min(100%, var(--chat-width));
@@ -44,7 +46,7 @@
 }
 
 .agent-hero p:not(.agent-eyebrow) {
-  max-width: 680px;
+  max-width: 720px;
   margin: 10px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -87,6 +89,30 @@
 
 .agent-status-dot[data-mode="read-only"] {
   background: var(--blue);
+}
+
+.agent-pipeline {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  overflow-x: auto;
+  padding: 2px 0 4px;
+  scrollbar-width: none;
+}
+
+.agent-pipeline::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-pipeline span {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
 }
 
 .agent-grid {
@@ -137,6 +163,88 @@
   line-height: 1.7;
 }
 
+.agent-knowledge-list,
+.agent-review-panel,
+.agent-validation-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-memory-item,
+.agent-risk,
+.agent-review-verdict {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.agent-memory-item strong,
+.agent-risk strong,
+.agent-review-verdict strong {
+  display: block;
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.agent-memory-item p,
+.agent-risk p,
+.agent-review-verdict p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.agent-risk-low {
+  border-color: color-mix(in srgb, var(--success) 28%, var(--border));
+}
+
+.agent-risk-medium {
+  border-color: color-mix(in srgb, #d5a33c 38%, var(--border));
+}
+
+.agent-risk-high,
+.agent-risk-blocked,
+.agent-review-verdict.blocked {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+}
+
+.agent-review-verdict.approved {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+}
+
+.agent-profile-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-profile-list span {
+  padding: 5px 7px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-soft);
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.agent-validation-panel ul {
+  margin: 0;
+  padding-inline-start: 18px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.75;
+}
+
+.agent-runner-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .agent-plan-summary {
   margin: 0;
   color: var(--text-soft);
@@ -152,10 +260,16 @@
   line-height: 1.9;
 }
 
+.agent-activity-card,
+.agent-result-card,
+.agent-proposal-card {
+  margin-top: 10px;
+}
+
 .agent-activity {
   display: grid;
   gap: 8px;
-  max-height: 230px;
+  max-height: 240px;
   overflow: auto;
 }
 
@@ -175,9 +289,13 @@
   background: var(--blue);
 }
 
-.agent-result-card,
-.agent-proposal-card {
-  margin-top: 10px;
+.agent-activity-dot[data-stage="security"] {
+  background: #d5a33c;
+}
+
+.agent-activity-dot[data-stage="review"],
+.agent-activity-dot[data-stage="testing"] {
+  background: var(--success);
 }
 
 .agent-result {
@@ -309,6 +427,7 @@
   }
 
   .agent-status-bar {
+    align-items: flex-start;
     flex-wrap: wrap;
   }
 
