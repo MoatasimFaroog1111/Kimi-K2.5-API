@@ -4,13 +4,18 @@ from app.application.agent_service import AgentApplicationService
 from app.application.audit_service import AgentAuditService
 from app.application.change_validator import ChangeValidationService
 from app.application.chat_service import ChatApplicationService
+from app.application.ci_feedback_service import CiFeedbackService
 from app.application.code_search_service import CodeSearchService
+from app.application.code_structure import CodeStructureExtractor
 from app.application.knowledge_service import ProjectKnowledgeService
+from app.application.preapproval_validation_service import PreApprovalValidationService
 from app.application.security_service import AgentSecurityService
+from app.application.semantic_search_service import SemanticCodeIntelligence
 from app.application.workflow_service import RepositoryWorkflowCatalog, WorkflowSelectionService
 from app.config import settings
 from app.core.workspace_policy import WorkspacePolicy
 from app.infrastructure.github_workspace import GitHubWorkspace
+from app.infrastructure.isolated_validation_runner import IsolatedValidationRunner
 from app.infrastructure.sqlite_audit import SQLiteAuditLog
 from app.infrastructure.sqlite_knowledge import SQLiteKnowledgeRepository
 from app.infrastructure.sqlite_proposal_store import SQLiteProposalStore
@@ -37,6 +42,8 @@ class ApplicationContainer:
         self.knowledge = ProjectKnowledgeService(self.knowledge_repository)
         self.audit = AgentAuditService(self.audit_repository)
         self.code_search = CodeSearchService()
+        self.code_structure = CodeStructureExtractor()
+        self.semantic = SemanticCodeIntelligence(self.model, self.code_structure)
         self.security = AgentSecurityService()
         self.validator = ChangeValidationService(self.policy, settings)
         self.workflows = RepositoryWorkflowCatalog(
@@ -44,6 +51,9 @@ class ApplicationContainer:
             prefix=settings.agent_workflow_prefix,
         )
         self.workflow_selection = WorkflowSelectionService()
+        self.validation_runner = IsolatedValidationRunner(self.workspace, settings)
+        self.preapproval = PreApprovalValidationService(self.validation_runner)
+        self.ci_feedback = CiFeedbackService(self.workspace)
 
         self.planner = PlannerAgent(self.model)
         self.coder = CoderAgent(self.model)
@@ -62,6 +72,8 @@ class ApplicationContainer:
             knowledge=self.knowledge,
             audit=self.audit,
             code_search=self.code_search,
+            semantic=self.semantic,
+            preapproval=self.preapproval,
             workflows=self.workflows,
             workflow_selection=self.workflow_selection,
             config=settings,
@@ -77,6 +89,7 @@ class ApplicationContainer:
             audit=self.audit,
             workflows=self.workflows,
             code_search=self.code_search,
+            ci_feedback=self.ci_feedback,
             config=settings,
         )
 
