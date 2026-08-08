@@ -1,0 +1,92 @@
+name: Agent Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'kimi-agent/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile Python
+        run: python -m compileall app tests
+
+      - name: Run unit tests
+        env:
+          KIMI_API_KEY: test-key
+          GATEWAY_API_KEY: test-gateway
+        run: python -m unittest discover -s tests -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find app/static -type f -name '*.js' -print0)
+
+  browser-smoke:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'kimi-agent/')
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install app and browser dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Start workspace server
+        env:
+          KIMI_API_KEY: test-key
+          GATEWAY_API_KEY: test-gateway
+        run: |
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/kimi-uvicorn.log 2>&1 &
+          echo $! > /tmp/kimi-uvicorn.pid
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/kimi-uvicorn.log
+          exit 1
+
+      - name: Run real Chromium smoke test
+        env:
+          BROWSER_SMOKE_URL: http://127.0.0.1:8000
+          BROWSER_ARTIFACT_DIR: artifacts
+        run: python tests/browser_smoke.py
+
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-browser-smoke
+          path: artifacts/
+          if-no-files-found: ignore
