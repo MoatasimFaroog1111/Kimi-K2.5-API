@@ -59,6 +59,9 @@ class ChangeProposal:
     knowledge_ids: tuple[str, ...] = ()
     sandbox_validation: SandboxValidationResult | None = None
     ci_feedback: CiFeedback | None = None
+    approved_paths: tuple[str, ...] = ()
+    applied_paths: tuple[str, ...] = ()
+    parent_proposal_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
