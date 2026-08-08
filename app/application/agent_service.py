@@ -1,28 +1,17 @@
 import json
 from collections.abc import AsyncIterator
-from difflib import unified_diff
 from typing import Any
-from uuid import uuid4
 
-from app.application.prompts import (
-    AGENT_IMPLEMENTER_SYSTEM_PROMPT,
-    AGENT_PLANNER_SYSTEM_PROMPT,
-    AGENT_STANDALONE_SYSTEM_PROMPT,
-)
+from app.application.agent_orchestrator import AgentOrchestrator
+from app.application.audit_service import AgentAuditService
+from app.application.code_search_service import CodeSearchService
+from app.application.knowledge_service import ProjectKnowledgeService
+from app.application.prompts import AGENT_STANDALONE_SYSTEM_PROMPT
+from app.application.workflow_service import RepositoryWorkflowCatalog
 from app.config import Settings
-from app.core.exceptions import AgentValidationError, ProposalStateError
-from app.core.workspace_policy import WorkspacePolicy
-from app.domain.agent import (
-    AgentPlan,
-    ChangeProposal,
-    ProposalStatus,
-    ProposedFileChange,
-)
-from app.domain.ports import (
-    LanguageModelPort,
-    ProposalRepositoryPort,
-    WorkspacePort,
-)
+from app.core.exceptions import ProposalStateError
+from app.domain.agent import ChangeProposal, ProposalStatus
+from app.domain.ports import LanguageModelPort, ProposalRepositoryPort, WorkspacePort
 
 
 class AgentApplicationService:
@@ -32,13 +21,21 @@ class AgentApplicationService:
         model: LanguageModelPort,
         workspace: WorkspacePort,
         proposals: ProposalRepositoryPort,
-        policy: WorkspacePolicy,
+        orchestrator: AgentOrchestrator,
+        knowledge: ProjectKnowledgeService,
+        audit: AgentAuditService,
+        workflows: RepositoryWorkflowCatalog,
+        code_search: CodeSearchService,
         config: Settings,
     ) -> None:
         self._model = model
         self._workspace = workspace
         self._proposals = proposals
-        self._policy = policy
+        self._orchestrator = orchestrator
+        self._knowledge = knowledge
+        self._audit = audit
+        self._workflows = workflows
+        self._code_search = code_search
         self._config = config
 
     async def status(self) -> dict[str, Any]:
@@ -51,6 +48,27 @@ class AgentApplicationService:
             "mode": status.mode,
             "approval_required": True,
             "sandbox": "github-pull-request",
+            "agent_core_version": "2",
+            "multi_agent": self._config.agent_v2_enabled,
+            "roles": ["planner", "coder", "reviewer", "tester"],
+            "memory": {
+                "enabled": self._config.agent_knowledge_enabled,
+                "backend": "sqlite",
+                "path": self._config.agent_state_db_path,
+            },
+            "safe_runner": self._config.agent_safe_runner_mode,
+            "browser_verification": self._config.agent_browser_verification_enabled,
+            "capabilities": [
+                "project-memory",
+                "knowledge-retrieval",
+                "codebase-path-search",
+                "multi-agent-review",
+                "security-risk-gate",
+                "workflow-catalog",
+                "browser-smoke-planning",
+                "audit-log",
+                "pull-request-approval",
+            ],
         }
 
     async def stream_task(
@@ -86,7 +104,10 @@ class AgentApplicationService:
             }
             response = await self._model.complete(
                 system_prompt=AGENT_STANDALONE_SYSTEM_PROMPT,
-                user_prompt=self._standalone_prompt(task, history),
+                user_prompt=json.dumps(
+                    {"task": task, "recent_conversation": history[-8:]},
+                    ensure_ascii=False,
+                ),
                 model=model,
                 max_tokens=2048,
             )
@@ -94,79 +115,71 @@ class AgentApplicationService:
             yield {"type": "done", "model": model, "proposal_id": None}
             return
 
-        yield {
-            "type": "status",
-            "stage": "discovery",
-            "message": "Reading the safe repository tree.",
-        }
-        tree = await self._workspace.list_files()
-        if not tree:
-            raise AgentValidationError("The connected repository contains no readable files.")
-
-        planner_raw = await self._model.complete(
-            system_prompt=AGENT_PLANNER_SYSTEM_PROMPT,
-            user_prompt=self._planner_prompt(task, history, tree),
-            model=model,
-            max_tokens=2048,
-        )
-        plan = self._parse_plan(planner_raw, tree)
-        yield {
-            "type": "plan",
-            "summary": plan.summary,
-            "steps": list(plan.steps),
-            "files": list(plan.files_to_read),
-        }
-
-        yield {
-            "type": "status",
-            "stage": "inspection",
-            "message": f"Reading {len(plan.files_to_read)} relevant file(s).",
-        }
-        files = await self._workspace.read_files(list(plan.files_to_read))
-
-        implementer_raw = await self._model.complete(
-            system_prompt=AGENT_IMPLEMENTER_SYSTEM_PROMPT,
-            user_prompt=self._implementation_prompt(task, plan, tree, files),
-            model=model,
-            max_tokens=self._config.agent_max_output_tokens,
-        )
-        assistant_message, raw_changes = self._parse_implementation(implementer_raw)
-        changes = self._validate_changes(raw_changes, tree, files)
-
-        if not changes:
-            yield {"type": "delta", "content": assistant_message}
-            yield {"type": "done", "model": model, "proposal_id": None}
-            return
-
-        proposal = ChangeProposal(
-            id=uuid4().hex[:16],
-            repository=workspace_status.repository or "",
-            base_branch=workspace_status.branch or self._config.agent_github_branch,
+        async for event in self._orchestrator.stream_connected_task(
             task=task,
-            summary=assistant_message or plan.summary,
-            plan=plan,
-            changes=tuple(changes),
-        )
-        self._proposals.save(proposal)
-
-        yield {"type": "delta", "content": assistant_message}
-        yield {
-            "type": "approval_required",
-            "proposal": self._serialize_proposal(proposal, workspace_status.write_enabled),
-        }
-        yield {"type": "done", "model": model, "proposal_id": proposal.id}
+            model=model,
+            history=history,
+        ):
+            if event.get("type") == "approval_required" and isinstance(
+                event.get("proposal"), ChangeProposal
+            ):
+                proposal = event["proposal"]
+                yield {
+                    **event,
+                    "proposal": self._serialize_proposal(
+                        proposal,
+                        can_approve=workspace_status.write_enabled,
+                    ),
+                }
+            else:
+                yield event
 
     async def approve(self, proposal_id: str) -> dict[str, Any]:
         proposal = self._proposals.get(proposal_id)
         if proposal.status is not ProposalStatus.PENDING:
             raise ProposalStateError("Only pending proposals can be approved.")
+        if proposal.review and not proposal.review.approved:
+            raise ProposalStateError("Independent review has not approved this proposal.")
+        if proposal.risk and proposal.risk.blocked:
+            raise ProposalStateError("Security policy blocks this proposal.")
+
+        self._audit.record(
+            run_id=proposal.run_id or proposal.id,
+            event_type="proposal.approval_requested",
+            message="User explicitly approved the proposal.",
+            metadata={"proposal_id": proposal.id},
+        )
         try:
             applied = await self._workspace.apply_proposal(proposal)
         except Exception:
             proposal.status = ProposalStatus.PENDING
             self._proposals.save(proposal)
+            self._audit.record(
+                run_id=proposal.run_id or proposal.id,
+                event_type="proposal.apply_failed",
+                message="GitHub proposal application failed.",
+                metadata={"proposal_id": proposal.id},
+            )
             raise
+
+        if self._config.agent_knowledge_enabled:
+            item = self._knowledge.remember_proposal(
+                applied,
+                review=applied.review,
+                validation=applied.validation,
+            )
+            applied.knowledge_ids = tuple(dict.fromkeys([*applied.knowledge_ids, item.id]))
         self._proposals.save(applied)
+        self._audit.record(
+            run_id=applied.run_id or applied.id,
+            event_type="proposal.applied",
+            message="Pull Request created after user approval.",
+            metadata={
+                "proposal_id": applied.id,
+                "pull_request_url": applied.pull_request_url or "",
+                "knowledge_ids": list(applied.knowledge_ids),
+            },
+        )
         return self._serialize_proposal(applied, can_approve=False)
 
     def reject(self, proposal_id: str) -> dict[str, Any]:
@@ -175,116 +188,64 @@ class AgentApplicationService:
             raise ProposalStateError("Only pending proposals can be rejected.")
         proposal.status = ProposalStatus.REJECTED
         self._proposals.save(proposal)
+        self._audit.record(
+            run_id=proposal.run_id or proposal.id,
+            event_type="proposal.rejected",
+            message="User rejected the proposal.",
+            metadata={"proposal_id": proposal.id},
+        )
         return self._serialize_proposal(proposal, can_approve=False)
 
     async def undo(self, proposal_id: str) -> dict[str, Any]:
         proposal = self._proposals.get(proposal_id)
         undone = await self._workspace.undo_proposal(proposal)
         self._proposals.save(undone)
+        self._audit.record(
+            run_id=undone.run_id or undone.id,
+            event_type="proposal.undone",
+            message="Pull Request closed and agent branch removed.",
+            metadata={"proposal_id": undone.id},
+        )
         return self._serialize_proposal(undone, can_approve=False)
 
-    def _parse_plan(self, raw: str, tree: list[str]) -> AgentPlan:
-        payload = self._parse_json_object(raw)
-        summary = str(payload.get("summary") or "Implementation plan").strip()
-        steps = tuple(
-            str(step).strip()
-            for step in payload.get("steps", [])[:8]
-            if str(step).strip()
+    def memory(self, *, query: str = "", limit: int = 20) -> list[dict[str, object]]:
+        items = (
+            self._knowledge.retrieve(query, limit=limit)
+            if query.strip()
+            else self._knowledge.recent(limit=limit)
         )
-        selected: list[str] = []
-        tree_set = set(tree)
-        for raw_path in payload.get("files_to_read", [])[: self._config.agent_max_read_files]:
-            path = str(raw_path).strip()
-            if path in tree_set and path not in selected:
-                selected.append(path)
-        if not steps:
-            raise AgentValidationError("The agent planner returned no actionable steps.")
-        return AgentPlan(summary=summary, steps=steps, files_to_read=tuple(selected))
+        return self._knowledge.serialize(items)
 
-    def _parse_implementation(self, raw: str) -> tuple[str, list[dict[str, Any]]]:
-        payload = self._parse_json_object(raw)
-        message = str(payload.get("assistant_message") or "").strip()
-        changes = payload.get("changes") or []
-        if not isinstance(changes, list):
-            raise AgentValidationError("Agent changes must be a list.")
-        return message, [item for item in changes if isinstance(item, dict)]
+    def audit_events(self, *, limit: int | None = None) -> list[dict[str, object]]:
+        return self._audit.recent(limit=limit or self._config.agent_audit_limit)
 
-    def _validate_changes(
-        self,
-        raw_changes: list[dict[str, Any]],
-        tree: list[str],
-        files,
-    ) -> list[ProposedFileChange]:
-        self._policy.validate_change_count(len(raw_changes))
-        existing = {file.path: file for file in files}
-        tree_set = set(tree)
-        seen: set[str] = set()
-        validated: list[ProposedFileChange] = []
+    async def workflow_catalog(self) -> list[dict[str, object]]:
+        workflows = await self._workflows.list_workflows()
+        return [
+            {
+                "name": workflow.name,
+                "description": workflow.description,
+                "safe_to_auto_run": workflow.safe_to_auto_run,
+                "steps": list(workflow.steps),
+            }
+            for workflow in workflows
+        ]
 
-        for item in raw_changes:
-            path = self._policy.validate_path(str(item.get("path") or ""))
-            if path in seen:
-                raise AgentValidationError(f"Duplicate proposed file: {path}")
-            if path in tree_set and path not in existing:
-                raise AgentValidationError(
-                    f"Agent attempted to modify an unread existing file: {path}"
-                )
-            content = item.get("content")
-            if not isinstance(content, str):
-                raise AgentValidationError(f"Complete content is required for {path}.")
-            self._policy.validate_content(path, content)
-            reason = str(item.get("reason") or "Agent implementation").strip()
-            original = existing.get(path)
-            validated.append(
-                ProposedFileChange(
-                    path=path,
-                    content=content,
-                    reason=reason,
-                    original_sha=original.sha if original else None,
-                    original_content=original.content if original else None,
-                    diff=self._build_diff(path, original.content if original else "", content),
-                )
-            )
-            seen.add(path)
-        return validated
-
-    @staticmethod
-    def _parse_json_object(raw: str) -> dict[str, Any]:
-        text = raw.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1]).strip()
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end < start:
-            raise AgentValidationError("Agent returned invalid structured output.")
-        try:
-            payload = json.loads(text[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise AgentValidationError("Agent returned invalid JSON output.") from exc
-        if not isinstance(payload, dict):
-            raise AgentValidationError("Agent output must be a JSON object.")
-        return payload
-
-    @staticmethod
-    def _build_diff(path: str, before: str, after: str) -> str:
-        diff = "".join(
-            unified_diff(
-                before.splitlines(keepends=True),
-                after.splitlines(keepends=True),
-                fromfile=f"a/{path}",
-                tofile=f"b/{path}",
-            )
-        )
-        return diff[:30_000]
+    async def search_paths(self, query: str, *, limit: int = 24) -> list[str]:
+        tree = await self._workspace.list_files()
+        return self._code_search.rank_paths(query, tree, limit=limit)
 
     @staticmethod
     def _serialize_proposal(
         proposal: ChangeProposal,
         can_approve: bool,
     ) -> dict[str, Any]:
+        review = proposal.review
+        validation = proposal.validation
+        risk = proposal.risk
         return {
             "id": proposal.id,
+            "run_id": proposal.run_id,
             "repository": proposal.repository,
             "base_branch": proposal.base_branch,
             "summary": proposal.summary,
@@ -292,6 +253,35 @@ class AgentApplicationService:
             "can_approve": can_approve and proposal.status is ProposalStatus.PENDING,
             "branch_name": proposal.branch_name,
             "pull_request_url": proposal.pull_request_url,
+            "knowledge_ids": list(proposal.knowledge_ids),
+            "review": (
+                {
+                    "approved": review.approved,
+                    "score": review.score,
+                    "findings": list(review.findings),
+                    "required_changes": list(review.required_changes),
+                }
+                if review
+                else None
+            ),
+            "validation": (
+                {
+                    "checks": list(validation.checks),
+                    "workflow_profiles": list(validation.workflow_profiles),
+                    "browser_required": validation.browser_required,
+                }
+                if validation
+                else None
+            ),
+            "risk": (
+                {
+                    "level": risk.level.value,
+                    "blocked": risk.blocked,
+                    "reasons": list(risk.reasons),
+                }
+                if risk
+                else None
+            ),
             "changes": [
                 {
                     "path": change.path,
@@ -301,43 +291,3 @@ class AgentApplicationService:
                 for change in proposal.changes
             ],
         }
-
-    @staticmethod
-    def _planner_prompt(
-        task: str,
-        history: list[dict[str, str]],
-        tree: list[str],
-    ) -> str:
-        return json.dumps(
-            {
-                "task": task,
-                "recent_conversation": history[-8:],
-                "repository_tree": tree,
-            },
-            ensure_ascii=False,
-        )
-
-    @staticmethod
-    def _implementation_prompt(task: str, plan: AgentPlan, tree: list[str], files) -> str:
-        return json.dumps(
-            {
-                "task": task,
-                "plan": {
-                    "summary": plan.summary,
-                    "steps": list(plan.steps),
-                },
-                "repository_tree": tree,
-                "files": [
-                    {"path": file.path, "content": file.content}
-                    for file in files
-                ],
-            },
-            ensure_ascii=False,
-        )
-
-    @staticmethod
-    def _standalone_prompt(task: str, history: list[dict[str, str]]) -> str:
-        return json.dumps(
-            {"task": task, "recent_conversation": history[-8:]},
-            ensure_ascii=False,
-        )
