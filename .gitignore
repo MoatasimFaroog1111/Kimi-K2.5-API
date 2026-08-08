@@ -2,3 +2,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+.runtime/
+artifacts/
+*.db
+*.db-wal
+*.db-shm
