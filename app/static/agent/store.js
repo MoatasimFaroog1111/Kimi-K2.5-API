@@ -1,5 +1,5 @@
-const STORAGE_KEY = "kimi_agent_workspace_v2";
-const LEGACY_STORAGE_KEY = "kimi_agent_workspace_v1";
+const STORAGE_KEY = "kimi_agent_workspace_v3";
+const LEGACY_STORAGE_KEYS = ["kimi_agent_workspace_v2", "kimi_agent_workspace_v1"];
 const MODE_KEY = "kimi_workspace_mode_v1";
 
 export class AgentStore {
@@ -42,7 +42,7 @@ export class AgentStore {
       stage,
       createdAt: new Date().toISOString(),
     });
-    this.state.activities = this.state.activities.slice(-80);
+    this.state.activities = this.state.activities.slice(-100);
     this.save();
   }
 
@@ -54,10 +54,14 @@ export class AgentStore {
 
   #load() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-        || localStorage.getItem(LEGACY_STORAGE_KEY)
-        || "null";
-      const parsed = JSON.parse(raw);
+      let raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        for (const key of LEGACY_STORAGE_KEYS) {
+          raw = localStorage.getItem(key);
+          if (raw) break;
+        }
+      }
+      const parsed = JSON.parse(raw || "null");
       if (parsed && typeof parsed === "object") {
         return {
           workspace: parsed.workspace || null,
@@ -66,9 +70,12 @@ export class AgentStore {
           plan: parsed.plan || null,
           knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : [],
           searchCandidates: Array.isArray(parsed.searchCandidates) ? parsed.searchCandidates : [],
+          semanticHits: Array.isArray(parsed.semanticHits) ? parsed.semanticHits : [],
           security: parsed.security || null,
           review: parsed.review || null,
           validation: parsed.validation || null,
+          sandboxValidation: parsed.sandboxValidation || null,
+          ciFeedback: parsed.ciFeedback || null,
           activities: Array.isArray(parsed.activities) ? parsed.activities : [],
           result: typeof parsed.result === "string" ? parsed.result : "",
           proposal: parsed.proposal || null,
@@ -91,9 +98,12 @@ export class AgentStore {
       plan: null,
       knowledge: [],
       searchCandidates: [],
+      semanticHits: [],
       security: null,
       review: null,
       validation: null,
+      sandboxValidation: null,
+      ciFeedback: null,
       activities: [],
       result: "",
       proposal: null,
