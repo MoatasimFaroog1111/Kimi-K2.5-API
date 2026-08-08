@@ -32,10 +32,11 @@ class IsolatedValidationRunner:
         changes: list[ProposedFileChange],
         profiles: tuple[str, ...],
         attempt: int,
+        base_ref: str | None = None,
     ) -> SandboxValidationResult:
-        with TemporaryDirectory(prefix="kimi-agent-v3-") as temp_dir:
+        with TemporaryDirectory(prefix="kimi-agent-v4-") as temp_dir:
             root = Path(temp_dir).resolve()
-            await self._snapshot.materialize_snapshot(root)
+            await self._snapshot.materialize_snapshot(root, ref=base_ref)
             self._apply_changes(root, changes)
             checks: list[ValidationCheckResult] = []
 
