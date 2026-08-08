@@ -1,7 +1,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
@@ -28,6 +28,39 @@ async def agent_status(
     service: AgentApplicationService = Depends(get_agent_service),
 ) -> dict:
     return await service.status()
+
+
+@router.get("/memory")
+async def agent_memory(
+    q: str = Query(default="", max_length=500),
+    limit: int = Query(default=20, ge=1, le=100),
+    service: AgentApplicationService = Depends(get_agent_service),
+) -> dict:
+    return {"items": service.memory(query=q, limit=limit)}
+
+
+@router.get("/audit")
+async def agent_audit(
+    limit: int = Query(default=100, ge=1, le=500),
+    service: AgentApplicationService = Depends(get_agent_service),
+) -> dict:
+    return {"events": service.audit_events(limit=limit)}
+
+
+@router.get("/workflows")
+async def agent_workflows(
+    service: AgentApplicationService = Depends(get_agent_service),
+) -> dict:
+    return {"workflows": await service.workflow_catalog()}
+
+
+@router.get("/search")
+async def agent_search(
+    q: str = Query(min_length=2, max_length=500),
+    limit: int = Query(default=24, ge=1, le=100),
+    service: AgentApplicationService = Depends(get_agent_service),
+) -> dict:
+    return {"query": q, "paths": await service.search_paths(q, limit=limit)}
 
 
 @router.post("/stream")
