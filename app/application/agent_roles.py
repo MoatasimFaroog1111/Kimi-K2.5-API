@@ -11,6 +11,7 @@ from app.application.structured_output import StructuredOutputParser
 from app.core.exceptions import AgentValidationError
 from app.domain.agent import AgentPlan, ProposedFileChange, WorkspaceFile
 from app.domain.agent_v2 import KnowledgeItem, ReviewResult, RiskAssessment, ValidationPlan
+from app.domain.agent_v3 import SemanticCodeHit
 from app.domain.ports import LanguageModelPort
 
 
@@ -25,6 +26,7 @@ class PlannerAgent:
         history: list[dict[str, str]],
         tree: list[str],
         search_candidates: list[str],
+        semantic_hits: list[SemanticCodeHit],
         knowledge: list[KnowledgeItem],
         model: str,
         max_read_files: int,
@@ -37,6 +39,15 @@ class PlannerAgent:
                     "recent_conversation": history[-8:],
                     "repository_tree": tree,
                     "code_search_candidates": search_candidates,
+                    "semantic_code_hits": [
+                        {
+                            "path": hit.path,
+                            "score": hit.score,
+                            "rationale": hit.rationale,
+                            "symbols": list(hit.symbols),
+                        }
+                        for hit in semantic_hits
+                    ],
                     "project_knowledge": _knowledge_payload(knowledge),
                     "max_read_files": max_read_files,
                 },
@@ -61,6 +72,11 @@ class PlannerAgent:
             path = str(raw_path).strip()
             if path in tree_set and path not in selected:
                 selected.append(path)
+
+        if not selected:
+            for hit in semantic_hits[:max_read_files]:
+                if hit.path in tree_set and hit.path not in selected:
+                    selected.append(hit.path)
 
         return AgentPlan(
             summary=summary,
