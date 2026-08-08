@@ -22,6 +22,7 @@ class AgentModeController {
       approve: () => this.approve(),
       reject: () => this.reject(),
       undo: () => this.undo(),
+      refreshCi: () => this.refreshCi(),
     });
 
     this.#wireModeSwitch();
@@ -49,7 +50,7 @@ class AgentModeController {
       : "اسأل Kimi أي شيء…";
 
     if (isAgent) {
-      this.title.textContent = "Agent Core V2";
+      this.title.textContent = "Agent Intelligence V3";
       await this.refreshStatus();
       this.input.focus();
     } else {
@@ -61,7 +62,7 @@ class AgentModeController {
     }));
 
     if (notify) {
-      this.#toast(isAgent ? "تم تفعيل Agent Core V2." : "تم تفعيل وضع المحادثة.");
+      this.#toast(isAgent ? "تم تفعيل Agent Intelligence V3." : "تم تفعيل وضع المحادثة.");
     }
   }
 
@@ -89,13 +90,16 @@ class AgentModeController {
       plan: null,
       knowledge: [],
       searchCandidates: [],
+      semanticHits: [],
       security: null,
       review: null,
       validation: null,
+      sandboxValidation: null,
+      ciFeedback: null,
       proposal: null,
     });
     this.store.addMessage("user", task);
-    this.store.addActivity("تم استلام المهمة وبدء دورة Agent Core V2.", "start");
+    this.store.addActivity("تم استلام المهمة وبدء Agent Intelligence V3.", "start");
     this.input.value = "";
     this.sendButton.disabled = true;
     this.component.render(this.store.state);
@@ -134,10 +138,13 @@ class AgentModeController {
   async approve() {
     const proposal = this.store.state.proposal;
     if (!proposal?.id || !proposal.can_approve) return;
-    await this.#proposalAction(
+    const payload = await this.#proposalAction(
       "جارٍ إنشاء فرع وPull Request…",
       () => this.api.approve(proposal.id),
     );
+    if (payload?.proposal?.status === "applied") {
+      this.#pollCi(payload.proposal.id);
+    }
   }
 
   async reject() {
@@ -158,19 +165,42 @@ class AgentModeController {
     );
   }
 
+  async refreshCi() {
+    const proposal = this.store.state.proposal;
+    if (!proposal?.id || proposal.status !== "applied") return;
+    try {
+      const payload = await this.api.ci(proposal.id);
+      this.store.state.ciFeedback = payload.ci || null;
+      this.store.state.proposal.ci_feedback = payload.ci || null;
+      this.store.addActivity(
+        `CI: ${payload.ci?.status || "unknown"}${payload.ci?.conclusion ? ` / ${payload.ci.conclusion}` : ""}`,
+        "ci",
+      );
+      this.store.save();
+      this.component.render(this.store.state);
+    } catch (error) {
+      this.store.addActivity(this.#humanize(error), "error");
+      this.store.save();
+      this.component.render(this.store.state);
+    }
+  }
+
   #handleEvent(event) {
     if (event.type === "status") {
       if (event.workspace) this.store.state.workspace = event.workspace;
       this.store.addActivity(event.message || event.stage, event.stage);
     } else if (event.type === "run") {
       this.store.state.runId = event.run_id || null;
-      this.store.addActivity(event.message || "بدأت دورة الوكيل.", "run");
+      this.store.addActivity(event.message || "بدأت دورة V3.", event.stage || "run");
     } else if (event.type === "knowledge") {
       this.store.state.knowledge = event.items || [];
       this.store.addActivity(event.message || "تم فحص ذاكرة المشروع.", "memory");
     } else if (event.type === "search") {
       this.store.state.searchCandidates = event.candidates || [];
       this.store.addActivity(event.message || "تم البحث داخل بنية المشروع.", "search");
+    } else if (event.type === "semantic") {
+      this.store.state.semanticHits = event.hits || [];
+      this.store.addActivity(event.message || "اكتمل التحليل الدلالي للكود.", "semantic");
     } else if (event.type === "plan") {
       this.store.state.plan = {
         summary: event.summary,
@@ -205,11 +235,20 @@ class AgentModeController {
         runner: event.runner || "",
       };
       this.store.addActivity("أكمل Tester خطة التحقق والاختبارات.", "testing");
+    } else if (event.type === "sandbox_validation") {
+      this.store.state.sandboxValidation = event;
+      this.store.addActivity(
+        event.passed
+          ? `نجح Sandbox في المحاولة ${event.attempt}.`
+          : `فشل Sandbox في المحاولة ${event.attempt} وسيحاول الوكيل الإصلاح إن أمكن.`,
+        event.passed ? "sandbox" : "auto-repair",
+      );
     } else if (event.type === "delta") {
       this.store.state.result += event.content || "";
     } else if (event.type === "approval_required") {
       this.store.state.proposal = event.proposal;
-      this.store.addActivity("التغييرات اجتازت المراجعة وتنتظر موافقتك.", "approval");
+      this.store.state.sandboxValidation = event.proposal?.sandbox_validation || this.store.state.sandboxValidation;
+      this.store.addActivity("التغييرات اجتازت المراجعة والـSandbox وتنتظر موافقتك.", "approval");
     } else if (event.type === "done") {
       this.store.addActivity("اكتملت دورة الوكيل.", "done");
     }
@@ -224,15 +263,27 @@ class AgentModeController {
     try {
       const payload = await action();
       this.store.state.proposal = payload.proposal;
+      this.store.state.ciFeedback = payload.proposal?.ci_feedback || null;
       this.store.state.error = "";
       this.store.addActivity("تم تحديث حالة المقترح بنجاح.", "done");
+      return payload;
     } catch (error) {
       this.store.state.error = this.#humanize(error);
       this.store.addActivity(this.store.state.error, "error");
+      return null;
     } finally {
       this.store.state.isRunning = false;
       this.store.save();
       this.component.render(this.store.state);
+    }
+  }
+
+  async #pollCi(proposalId) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1500 : 5000));
+      if (this.store.state.proposal?.id !== proposalId) return;
+      await this.refreshCi();
+      if (this.store.state.ciFeedback?.status === "completed") return;
     }
   }
 
