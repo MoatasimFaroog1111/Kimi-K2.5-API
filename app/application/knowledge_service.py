@@ -24,7 +24,12 @@ class ProjectKnowledgeService:
         review: ReviewResult | None = None,
         validation: ValidationPlan | None = None,
     ) -> KnowledgeItem:
-        paths = tuple(change.path for change in proposal.changes)
+        applied = set(proposal.applied_paths)
+        paths = tuple(
+            change.path
+            for change in proposal.changes
+            if not applied or change.path in applied
+        )
         summary_parts = [proposal.summary.strip()]
         if review:
             summary_parts.append(
@@ -35,6 +40,10 @@ class ProjectKnowledgeService:
         if validation and validation.workflow_profiles:
             summary_parts.append(
                 "Validation profiles: " + ", ".join(validation.workflow_profiles)
+            )
+        if proposal.parent_proposal_id:
+            summary_parts.append(
+                f"Follow-up fix proposal for {proposal.parent_proposal_id}."
             )
         now = datetime.now(timezone.utc)
         item = KnowledgeItem(
