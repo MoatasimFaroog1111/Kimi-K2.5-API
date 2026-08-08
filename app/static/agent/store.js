@@ -1,5 +1,9 @@
-const STORAGE_KEY = "kimi_agent_workspace_v3";
-const LEGACY_STORAGE_KEYS = ["kimi_agent_workspace_v2", "kimi_agent_workspace_v1"];
+const STORAGE_KEY = "kimi_agent_workspace_v4";
+const LEGACY_STORAGE_KEYS = [
+  "kimi_agent_workspace_v3",
+  "kimi_agent_workspace_v2",
+  "kimi_agent_workspace_v1",
+];
 const MODE_KEY = "kimi_workspace_mode_v1";
 
 export class AgentStore {
@@ -15,8 +19,14 @@ export class AgentStore {
     localStorage.setItem(MODE_KEY, mode === "agent" ? "agent" : "chat");
   }
 
-  resetTask() {
+  resetTask({ preserveRuns = true } = {}) {
+    const recentRuns = preserveRuns ? this.state.recentRuns : [];
+    const workspace = this.state.workspace;
+    const autoModel = this.state.autoModel;
     this.state = this.#emptyState();
+    this.state.recentRuns = recentRuns;
+    this.state.workspace = workspace;
+    this.state.autoModel = autoModel;
     this.save();
   }
 
@@ -42,7 +52,7 @@ export class AgentStore {
       stage,
       createdAt: new Date().toISOString(),
     });
-    this.state.activities = this.state.activities.slice(-100);
+    this.state.activities = this.state.activities.slice(-120);
     this.save();
   }
 
@@ -66,6 +76,12 @@ export class AgentStore {
         return {
           workspace: parsed.workspace || null,
           runId: parsed.runId || null,
+          runStatus: parsed.runStatus || null,
+          autoModel: parsed.autoModel !== false,
+          modelRoute: parsed.modelRoute || null,
+          contextReport: parsed.contextReport || null,
+          budget: parsed.budget || null,
+          recentRuns: Array.isArray(parsed.recentRuns) ? parsed.recentRuns : [],
           messages: Array.isArray(parsed.messages) ? parsed.messages : [],
           plan: parsed.plan || null,
           knowledge: Array.isArray(parsed.knowledge) ? parsed.knowledge : [],
@@ -80,6 +96,7 @@ export class AgentStore {
           result: typeof parsed.result === "string" ? parsed.result : "",
           proposal: parsed.proposal || null,
           isRunning: false,
+          isControlPending: false,
           error: "",
           updatedAt: parsed.updatedAt || new Date().toISOString(),
         };
@@ -94,6 +111,12 @@ export class AgentStore {
     return {
       workspace: null,
       runId: null,
+      runStatus: null,
+      autoModel: true,
+      modelRoute: null,
+      contextReport: null,
+      budget: null,
+      recentRuns: [],
       messages: [],
       plan: null,
       knowledge: [],
@@ -108,6 +131,7 @@ export class AgentStore {
       result: "",
       proposal: null,
       isRunning: false,
+      isControlPending: false,
       error: "",
       updatedAt: new Date().toISOString(),
     };
