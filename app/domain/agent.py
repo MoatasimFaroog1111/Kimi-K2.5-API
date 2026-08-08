@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 
+from app.domain.agent_v2 import ReviewResult, RiskAssessment, ValidationPlan
+
 
 class ProposalStatus(StrEnum):
     PENDING = "pending"
@@ -49,6 +51,11 @@ class ChangeProposal:
     branch_name: str | None = None
     pull_request_url: str | None = None
     pull_request_number: int | None = None
+    run_id: str | None = None
+    review: ReviewResult | None = None
+    validation: ValidationPlan | None = None
+    risk: RiskAssessment | None = None
+    knowledge_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
