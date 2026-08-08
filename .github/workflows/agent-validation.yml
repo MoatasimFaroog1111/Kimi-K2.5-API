@@ -1,6 +1,8 @@
 name: Agent Validation
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -10,7 +12,7 @@ permissions:
 
 jobs:
   validate:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'kimi-agent/')
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'kimi-agent/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +46,7 @@ jobs:
           done < <(find app/static -type f -name '*.js' -print0)
 
   browser-smoke:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'kimi-agent/')
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'kimi-agent/')
     needs: validate
     runs-on: ubuntu-latest
     steps:
