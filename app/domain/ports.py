@@ -5,6 +5,7 @@ from typing import Protocol
 from app.domain.agent import ChangeProposal, ProposedFileChange, WorkspaceFile, WorkspaceStatus
 from app.domain.agent_v2 import AuditEvent, KnowledgeItem, WorkflowDefinition
 from app.domain.agent_v3 import CiFeedback, SandboxValidationResult
+from app.domain.agent_v4 import AgentRun
 
 
 class LanguageModelPort(Protocol):
@@ -39,9 +40,14 @@ class LanguageModelPort(Protocol):
 class WorkspacePort(Protocol):
     async def status(self) -> WorkspaceStatus: ...
 
-    async def list_files(self) -> list[str]: ...
+    async def list_files(self, *, ref: str | None = None) -> list[str]: ...
 
-    async def read_files(self, paths: list[str]) -> list[WorkspaceFile]: ...
+    async def read_files(
+        self,
+        paths: list[str],
+        *,
+        ref: str | None = None,
+    ) -> list[WorkspaceFile]: ...
 
     async def apply_proposal(self, proposal: ChangeProposal) -> ChangeProposal: ...
 
@@ -49,13 +55,28 @@ class WorkspacePort(Protocol):
 
 
 class WorkspaceSnapshotPort(Protocol):
-    async def materialize_snapshot(self, destination: Path) -> None: ...
+    async def materialize_snapshot(
+        self,
+        destination: Path,
+        *,
+        ref: str | None = None,
+    ) -> None: ...
 
 
 class ProposalRepositoryPort(Protocol):
     def save(self, proposal: ChangeProposal) -> None: ...
 
     def get(self, proposal_id: str) -> ChangeProposal: ...
+
+    def recent(self, *, limit: int = 50) -> list[ChangeProposal]: ...
+
+
+class RunRepositoryPort(Protocol):
+    def save(self, run: AgentRun) -> None: ...
+
+    def get(self, run_id: str) -> AgentRun: ...
+
+    def recent(self, *, limit: int = 50) -> list[AgentRun]: ...
 
 
 class KnowledgeRepositoryPort(Protocol):
@@ -93,6 +114,7 @@ class ValidationRunnerPort(Protocol):
         changes: list[ProposedFileChange],
         profiles: tuple[str, ...],
         attempt: int,
+        base_ref: str | None = None,
     ) -> SandboxValidationResult: ...
 
 
