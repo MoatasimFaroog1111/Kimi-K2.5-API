@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from typing import Protocol
 
 from app.domain.agent import ChangeProposal, WorkspaceFile, WorkspaceStatus
+from app.domain.agent_v2 import AuditEvent, KnowledgeItem, WorkflowDefinition
 
 
 class LanguageModelPort(Protocol):
@@ -49,3 +50,31 @@ class ProposalRepositoryPort(Protocol):
     def save(self, proposal: ChangeProposal) -> None: ...
 
     def get(self, proposal_id: str) -> ChangeProposal: ...
+
+
+class KnowledgeRepositoryPort(Protocol):
+    def save(self, item: KnowledgeItem) -> None: ...
+
+    def search(self, query: str, *, limit: int = 5) -> list[KnowledgeItem]: ...
+
+    def recent(self, *, limit: int = 20) -> list[KnowledgeItem]: ...
+
+
+class AuditLogPort(Protocol):
+    def record(self, event: AuditEvent) -> None: ...
+
+    def recent(self, *, limit: int = 100) -> list[AuditEvent]: ...
+
+
+class WorkflowCatalogPort(Protocol):
+    async def list_workflows(self) -> list[WorkflowDefinition]: ...
+
+
+class CodeSearchPort(Protocol):
+    def rank_paths(
+        self,
+        query: str,
+        paths: list[str],
+        *,
+        limit: int = 24,
+    ) -> list[str]: ...
