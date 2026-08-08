@@ -1,0 +1,131 @@
+.agent-semantic-list,
+.agent-ci-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-semantic-hit,
+.agent-ci-job {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+}
+
+.agent-semantic-hit > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agent-semantic-hit strong,
+.agent-ci-panel > strong,
+.agent-ci-job > span {
+  color: var(--text-soft);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.agent-semantic-hit > div span {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--blue);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.agent-semantic-hit p,
+.agent-semantic-hit small,
+.agent-ci-job small {
+  display: block;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.65;
+}
+
+.agent-semantic-hit small {
+  direction: ltr;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: left;
+}
+
+.agent-sandbox-verdict {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.agent-sandbox-verdict.passed {
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  color: var(--success);
+}
+
+.agent-sandbox-verdict.failed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: var(--danger);
+}
+
+.agent-check-passed {
+  color: var(--success);
+}
+
+.agent-check-failed {
+  color: var(--danger);
+}
+
+.agent-check-skipped {
+  color: var(--muted);
+}
+
+.agent-ci-job {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+}
+
+.agent-ci-job small {
+  grid-column: 1 / -1;
+}
+
+.agent-ci-job a {
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.agent-ci-success {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+}
+
+.agent-ci-failure {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.agent-ci-refresh {
+  margin-top: 10px;
+}
+
+.agent-activity-dot[data-stage="semantic"] {
+  background: #7557d9;
+}
+
+.agent-activity-dot[data-stage="sandbox"] {
+  background: var(--success);
+}
+
+.agent-activity-dot[data-stage="auto-repair"] {
+  background: #d5a33c;
+}
+
+.agent-activity-dot[data-stage="ci"] {
+  background: var(--blue);
+}
