@@ -128,5 +128,13 @@ async def undo_proposal(
     return ProposalResponse(proposal=await service.undo(proposal_id))
 
 
+@router.get("/proposals/{proposal_id}/ci")
+async def proposal_ci_feedback(
+    proposal_id: str,
+    service: AgentApplicationService = Depends(get_agent_service),
+) -> dict:
+    return {"ci": await service.proposal_ci(proposal_id)}
+
+
 def _event(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False) + "\n"
