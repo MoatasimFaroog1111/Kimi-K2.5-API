@@ -10,13 +10,15 @@ export class AgentWorkspaceComponent {
     this.statusText.textContent = this.#workspaceLabel(state.workspace);
     this.statusDot.dataset.mode = state.workspace?.mode || "not-configured";
     this.runState.textContent = state.isRunning ? "الوكيل يعمل الآن" : "جاهز لمهمة جديدة";
-    this.runId.textContent = state.runId ? `Run ${state.runId}` : "Agent Core V2";
+    this.runId.textContent = state.runId ? `Run ${state.runId}` : "Agent Intelligence V3";
     this.clearButton.disabled = state.isRunning;
 
     this.#renderKnowledge(state.knowledge);
+    this.#renderSemantic(state.semanticHits);
     this.#renderPlan(state.plan);
     this.#renderSecurityReview(state.security, state.review);
-    this.#renderValidation(state.validation);
+    this.#renderSandbox(state.validation, state.sandboxValidation);
+    this.#renderCi(state.ciFeedback || state.proposal?.ci_feedback, state.proposal);
     this.#renderActivities(state.activities);
     this.#renderResult(state.result, state.error);
     this.#renderProposal(state.proposal);
@@ -26,9 +28,9 @@ export class AgentWorkspaceComponent {
     this.root.innerHTML = `
       <div class="agent-hero">
         <div>
-          <p class="agent-eyebrow">MULTI-AGENT · MEMORY · APPROVAL FIRST</p>
-          <h2>Agent Core V2</h2>
-          <p>Memory → Search → Planner → Coder → Security → Reviewer → Tester → موافقتك → Pull Request.</p>
+          <p class="agent-eyebrow">SEMANTIC · SANDBOX · AUTO-REPAIR · CI FEEDBACK</p>
+          <h2>Agent Intelligence V3</h2>
+          <p>Memory → Search → Semantic → Planner → Coder → Security → Reviewer → Tester → Sandbox → Auto‑Repair → موافقتك → Pull Request → CI.</p>
         </div>
         <button id="agentClear" class="agent-secondary-button" type="button">مهمة جديدة</button>
       </div>
@@ -36,13 +38,14 @@ export class AgentWorkspaceComponent {
       <div class="agent-status-bar">
         <span class="agent-status-dot" id="agentStatusDot"></span>
         <strong id="agentStatusText">جاري قراءة حالة مساحة العمل…</strong>
-        <span id="agentRunId">Agent Core V2</span>
+        <span id="agentRunId">Agent Intelligence V3</span>
         <span id="agentRunState">جاهز لمهمة جديدة</span>
       </div>
 
       <div class="agent-pipeline" aria-label="مراحل الوكيل">
-        <span>Memory</span><span>Search</span><span>Planner</span><span>Coder</span>
-        <span>Security</span><span>Reviewer</span><span>Tester</span><span>Approval</span>
+        <span>Memory</span><span>Search</span><span>Semantic</span><span>Planner</span>
+        <span>Coder</span><span>Security</span><span>Reviewer</span><span>Tester</span>
+        <span>Sandbox</span><span>Approval</span><span>CI</span>
       </div>
 
       <div class="agent-grid agent-grid-v2">
@@ -52,33 +55,44 @@ export class AgentWorkspaceComponent {
         </section>
 
         <section class="agent-card">
-          <div class="agent-card-title"><span>02</span><h3>خطة Planner</h3></div>
+          <div class="agent-card-title"><span>02</span><h3>Semantic Code Intelligence</h3></div>
+          <div id="agentSemantic" class="agent-empty">تظهر الملفات الأعلى صلة بعد تحليل البنية والمحتوى.</div>
+        </section>
+
+        <section class="agent-card">
+          <div class="agent-card-title"><span>03</span><h3>خطة Planner</h3></div>
           <div id="agentPlan" class="agent-empty">لم تبدأ مهمة بعد.</div>
         </section>
 
         <section class="agent-card">
-          <div class="agent-card-title"><span>03</span><h3>Security + Reviewer</h3></div>
+          <div class="agent-card-title"><span>04</span><h3>Security + Reviewer</h3></div>
           <div id="agentReview" class="agent-empty">تظهر نتيجة المخاطر والمراجعة المستقلة هنا.</div>
         </section>
 
         <section class="agent-card">
-          <div class="agent-card-title"><span>04</span><h3>خطة Tester</h3></div>
-          <div id="agentValidation" class="agent-empty">تظهر الاختبارات وBrowser verification هنا.</div>
+          <div class="agent-card-title"><span>05</span><h3>Pre‑Approval Sandbox</h3></div>
+          <div id="agentSandbox" class="agent-empty">تظهر الاختبارات الفعلية ومحاولات الإصلاح التلقائي هنا.</div>
+        </section>
+
+        <section class="agent-card">
+          <div class="agent-card-title"><span>06</span><h3>GitHub CI Feedback</h3></div>
+          <div id="agentCi" class="agent-empty">يظهر CI بعد إنشاء Pull Request.</div>
+          <button id="agentRefreshCi" class="agent-secondary-button agent-ci-refresh" type="button" hidden>تحديث CI</button>
         </section>
       </div>
 
       <section class="agent-card agent-activity-card">
-        <div class="agent-card-title"><span>05</span><h3>سجل النشاط</h3></div>
+        <div class="agent-card-title"><span>07</span><h3>سجل النشاط</h3></div>
         <div id="agentActivity" class="agent-activity agent-empty">ستظهر مراحل التنفيذ هنا.</div>
       </section>
 
       <section class="agent-card agent-result-card">
-        <div class="agent-card-title"><span>06</span><h3>نتيجة الوكيل</h3></div>
+        <div class="agent-card-title"><span>08</span><h3>نتيجة الوكيل</h3></div>
         <pre id="agentResult" class="agent-result">اكتب المهمة في مربع الرسالة ثم أرسلها.</pre>
       </section>
 
       <section id="agentProposalCard" class="agent-card agent-proposal-card" hidden>
-        <div class="agent-card-title"><span>07</span><h3>مقترح التغييرات</h3></div>
+        <div class="agent-card-title"><span>09</span><h3>مقترح التغييرات</h3></div>
         <div id="agentProposalSummary"></div>
         <div id="agentChanges" class="agent-changes"></div>
         <div class="agent-approval-actions">
@@ -94,9 +108,12 @@ export class AgentWorkspaceComponent {
     this.runId = this.root.querySelector("#agentRunId");
     this.runState = this.root.querySelector("#agentRunState");
     this.knowledge = this.root.querySelector("#agentKnowledge");
+    this.semantic = this.root.querySelector("#agentSemantic");
     this.plan = this.root.querySelector("#agentPlan");
     this.review = this.root.querySelector("#agentReview");
-    this.validation = this.root.querySelector("#agentValidation");
+    this.sandbox = this.root.querySelector("#agentSandbox");
+    this.ci = this.root.querySelector("#agentCi");
+    this.refreshCiButton = this.root.querySelector("#agentRefreshCi");
     this.activity = this.root.querySelector("#agentActivity");
     this.result = this.root.querySelector("#agentResult");
     this.proposalCard = this.root.querySelector("#agentProposalCard");
@@ -111,6 +128,7 @@ export class AgentWorkspaceComponent {
     this.approveButton.addEventListener("click", this.actions.approve);
     this.rejectButton.addEventListener("click", this.actions.reject);
     this.undoButton.addEventListener("click", this.actions.undo);
+    this.refreshCiButton.addEventListener("click", this.actions.refreshCi);
   }
 
   #renderKnowledge(items) {
@@ -130,6 +148,32 @@ export class AgentWorkspaceComponent {
       summary.textContent = item.summary || "";
       article.append(title, summary);
       this.knowledge.appendChild(article);
+    }
+  }
+
+  #renderSemantic(hits) {
+    this.semantic.replaceChildren();
+    if (!hits?.length) {
+      this.semantic.className = "agent-empty";
+      this.semantic.textContent = "تظهر الملفات الأعلى صلة بعد تحليل البنية والمحتوى.";
+      return;
+    }
+    this.semantic.className = "agent-semantic-list";
+    for (const hit of hits.slice(0, 8)) {
+      const row = document.createElement("article");
+      row.className = "agent-semantic-hit";
+      const header = document.createElement("div");
+      const path = document.createElement("strong");
+      path.textContent = hit.path;
+      const score = document.createElement("span");
+      score.textContent = `${hit.score || 0}/100`;
+      header.append(path, score);
+      const reason = document.createElement("p");
+      reason.textContent = hit.rationale || "";
+      const symbols = document.createElement("small");
+      symbols.textContent = (hit.symbols || []).slice(0, 8).join(" · ");
+      row.append(header, reason, symbols);
+      this.semantic.appendChild(row);
     }
   }
 
@@ -191,37 +235,77 @@ export class AgentWorkspaceComponent {
     }
   }
 
-  #renderValidation(validation) {
-    this.validation.replaceChildren();
-    if (!validation) {
-      this.validation.className = "agent-empty";
-      this.validation.textContent = "تظهر الاختبارات وBrowser verification هنا.";
+  #renderSandbox(validation, sandbox) {
+    this.sandbox.replaceChildren();
+    if (!validation && !sandbox) {
+      this.sandbox.className = "agent-empty";
+      this.sandbox.textContent = "تظهر الاختبارات الفعلية ومحاولات الإصلاح التلقائي هنا.";
       return;
     }
-    this.validation.className = "agent-validation-panel";
-    const profiles = document.createElement("div");
-    profiles.className = "agent-profile-list";
-    for (const profile of validation.workflowProfiles || []) {
-      const chip = document.createElement("span");
-      chip.textContent = profile;
-      profiles.appendChild(chip);
+    this.sandbox.className = "agent-validation-panel";
+    if (validation) {
+      const profiles = document.createElement("div");
+      profiles.className = "agent-profile-list";
+      for (const profile of validation.workflowProfiles || []) {
+        const chip = document.createElement("span");
+        chip.textContent = profile;
+        profiles.appendChild(chip);
+      }
+      this.sandbox.appendChild(profiles);
     }
-    this.validation.appendChild(profiles);
-
-    const list = document.createElement("ul");
-    for (const check of validation.checks || []) {
-      const item = document.createElement("li");
-      item.textContent = check;
-      list.appendChild(item);
+    if (sandbox) {
+      const verdict = document.createElement("p");
+      verdict.className = `agent-sandbox-verdict ${sandbox.passed ? "passed" : "failed"}`;
+      verdict.textContent = `${sandbox.passed ? "Sandbox passed" : "Sandbox failed"} · attempt ${sandbox.attempt || 1}`;
+      this.sandbox.appendChild(verdict);
+      const list = document.createElement("ul");
+      for (const check of sandbox.checks || []) {
+        const item = document.createElement("li");
+        item.className = `agent-check-${check.status || "skipped"}`;
+        item.textContent = `${check.name}: ${check.status}`;
+        if (check.output) item.title = check.output;
+        list.appendChild(item);
+      }
+      this.sandbox.appendChild(list);
     }
-    this.validation.appendChild(list);
+  }
 
-    const runner = document.createElement("p");
-    runner.className = "agent-runner-note";
-    runner.textContent = validation.browserRequired
-      ? `Runner: ${validation.runner || "github-actions"} · Chromium browser check required`
-      : `Runner: ${validation.runner || "github-actions"}`;
-    this.validation.appendChild(runner);
+  #renderCi(ci, proposal) {
+    this.ci.replaceChildren();
+    const canRefresh = proposal?.status === "applied";
+    this.refreshCiButton.hidden = !canRefresh;
+    if (!ci) {
+      this.ci.className = "agent-empty";
+      this.ci.textContent = canRefresh
+        ? "Pull Request موجود. اضغط تحديث CI أو انتظر التحديث التلقائي."
+        : "يظهر CI بعد إنشاء Pull Request.";
+      return;
+    }
+    this.ci.className = "agent-ci-panel";
+    const headline = document.createElement("strong");
+    headline.textContent = `CI: ${ci.status || "unknown"}${ci.conclusion ? ` · ${ci.conclusion}` : ""}`;
+    this.ci.appendChild(headline);
+    for (const job of ci.jobs || []) {
+      const row = document.createElement("article");
+      row.className = `agent-ci-job agent-ci-${job.conclusion || job.status || "pending"}`;
+      const title = document.createElement("span");
+      title.textContent = `${job.name} · ${job.conclusion || job.status}`;
+      row.appendChild(title);
+      if (job.failed_steps?.length) {
+        const failed = document.createElement("small");
+        failed.textContent = `Failed: ${job.failed_steps.join(", ")}`;
+        row.appendChild(failed);
+      }
+      if (job.url) {
+        const link = document.createElement("a");
+        link.href = job.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "GitHub";
+        row.appendChild(link);
+      }
+      this.ci.appendChild(row);
+    }
   }
 
   #renderActivities(activities) {
@@ -261,7 +345,8 @@ export class AgentWorkspaceComponent {
     meta.className = "agent-proposal-meta";
     const reviewScore = proposal.review?.score != null ? ` · Review ${proposal.review.score}/100` : "";
     const riskLevel = proposal.risk?.level ? ` · Risk ${proposal.risk.level}` : "";
-    meta.textContent = `${proposal.repository || "المستودع"} · ${proposal.base_branch || "main"} · ${proposal.status}${reviewScore}${riskLevel}`;
+    const sandbox = proposal.sandbox_validation?.passed ? " · Sandbox passed" : "";
+    meta.textContent = `${proposal.repository || "المستودع"} · ${proposal.base_branch || "main"} · ${proposal.status}${reviewScore}${riskLevel}${sandbox}`;
     this.proposalSummary.append(summary, meta);
 
     this.changes.replaceChildren();
@@ -298,7 +383,7 @@ export class AgentWorkspaceComponent {
       return "وضع التخطيط فقط · اربط مستودع GitHub لتفعيل قراءة الملفات";
     }
     const access = workspace.write_enabled ? "Pull Request بعد الموافقة" : "قراءة فقط";
-    const version = workspace.agent_core_version ? ` · Core V${workspace.agent_core_version}` : "";
+    const version = workspace.agent_core_version ? ` · Intelligence V${workspace.agent_core_version}` : "";
     return `${workspace.repository} · ${workspace.branch} · ${access}${version}`;
   }
 }
