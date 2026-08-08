@@ -8,7 +8,10 @@ class CiFeedbackService:
         self._provider = provider
 
     async def feedback(self, proposal: ChangeProposal) -> CiFeedback:
-        return await self._provider.feedback(proposal)
+        try:
+            return await self._provider.feedback(proposal)
+        except Exception:
+            return CiFeedback(status="unavailable", conclusion=None)
 
     @staticmethod
     def serialize(feedback: CiFeedback) -> dict[str, object]:
