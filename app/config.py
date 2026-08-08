@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     agent_max_file_bytes: int = Field(default=120_000, ge=1_000, le=1_000_000)
     agent_max_context_bytes: int = Field(default=300_000, ge=10_000, le=2_000_000)
     agent_max_output_tokens: int = Field(default=8192, ge=512, le=32768)
-    agent_proposal_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
+    agent_proposal_ttl_seconds: int = Field(default=2_592_000, ge=300, le=31_536_000)
 
     agent_v2_enabled: bool = True
     agent_state_db_path: str = ".runtime/kimi-agent-v2.db"
