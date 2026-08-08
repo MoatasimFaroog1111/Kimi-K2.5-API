@@ -21,6 +21,16 @@ class Settings(BaseSettings):
     agent_max_output_tokens: int = Field(default=8192, ge=512, le=32768)
     agent_proposal_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
 
+    agent_v2_enabled: bool = True
+    agent_state_db_path: str = ".runtime/kimi-agent-v2.db"
+    agent_knowledge_enabled: bool = True
+    agent_knowledge_limit: int = Field(default=5, ge=0, le=20)
+    agent_review_repair_attempts: int = Field(default=1, ge=0, le=2)
+    agent_workflow_prefix: str = ".agent/workflows"
+    agent_audit_limit: int = Field(default=200, ge=20, le=2000)
+    agent_browser_verification_enabled: bool = True
+    agent_safe_runner_mode: str = "github-actions"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
