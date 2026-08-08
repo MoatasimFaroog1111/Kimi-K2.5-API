@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 
 from app.domain.agent_v2 import ReviewResult, RiskAssessment, ValidationPlan
+from app.domain.agent_v3 import CiFeedback, SandboxValidationResult
 
 
 class ProposalStatus(StrEnum):
@@ -56,6 +57,8 @@ class ChangeProposal:
     validation: ValidationPlan | None = None
     risk: RiskAssessment | None = None
     knowledge_ids: tuple[str, ...] = ()
+    sandbox_validation: SandboxValidationResult | None = None
+    ci_feedback: CiFeedback | None = None
 
 
 @dataclass(frozen=True, slots=True)
