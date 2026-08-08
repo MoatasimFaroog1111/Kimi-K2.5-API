@@ -1,8 +1,10 @@
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Protocol
 
-from app.domain.agent import ChangeProposal, WorkspaceFile, WorkspaceStatus
+from app.domain.agent import ChangeProposal, ProposedFileChange, WorkspaceFile, WorkspaceStatus
 from app.domain.agent_v2 import AuditEvent, KnowledgeItem, WorkflowDefinition
+from app.domain.agent_v3 import CiFeedback, SandboxValidationResult
 
 
 class LanguageModelPort(Protocol):
@@ -46,6 +48,10 @@ class WorkspacePort(Protocol):
     async def undo_proposal(self, proposal: ChangeProposal) -> ChangeProposal: ...
 
 
+class WorkspaceSnapshotPort(Protocol):
+    async def materialize_snapshot(self, destination: Path) -> None: ...
+
+
 class ProposalRepositoryPort(Protocol):
     def save(self, proposal: ChangeProposal) -> None: ...
 
@@ -78,3 +84,17 @@ class CodeSearchPort(Protocol):
         *,
         limit: int = 24,
     ) -> list[str]: ...
+
+
+class ValidationRunnerPort(Protocol):
+    async def validate(
+        self,
+        *,
+        changes: list[ProposedFileChange],
+        profiles: tuple[str, ...],
+        attempt: int,
+    ) -> SandboxValidationResult: ...
+
+
+class CiFeedbackPort(Protocol):
+    async def feedback(self, proposal: ChangeProposal) -> CiFeedback: ...
