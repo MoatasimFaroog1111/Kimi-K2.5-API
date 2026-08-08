@@ -13,11 +13,13 @@ class PreApprovalValidationService:
         changes: list[ProposedFileChange],
         profiles: tuple[str, ...],
         attempt: int,
+        base_ref: str | None = None,
     ) -> SandboxValidationResult:
         return await self._runner.validate(
             changes=changes,
             profiles=profiles,
             attempt=attempt,
+            base_ref=base_ref,
         )
 
     @staticmethod
