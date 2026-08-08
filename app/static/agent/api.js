@@ -62,6 +62,12 @@ export class AgentApi {
     });
   }
 
+  ci(proposalId) {
+    return this.#jsonRequest(`/agent/proposals/${proposalId}/ci`, {
+      method: "GET",
+    });
+  }
+
   async #jsonRequest(url, options) {
     const response = await fetch(url, {
       ...options,
