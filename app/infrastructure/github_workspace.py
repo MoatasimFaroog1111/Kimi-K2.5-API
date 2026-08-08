@@ -9,7 +9,13 @@ import httpx
 from app.config import Settings
 from app.core.exceptions import AgentConfigurationError, WorkspaceError
 from app.core.workspace_policy import WorkspacePolicy
-from app.domain.agent import ChangeProposal, ProposalStatus, WorkspaceFile, WorkspaceStatus
+from app.domain.agent import (
+    ChangeProposal,
+    ProposalStatus,
+    ProposedFileChange,
+    WorkspaceFile,
+    WorkspaceStatus,
+)
 from app.domain.agent_v3 import CiFeedback, CiJobFeedback
 
 
@@ -57,9 +63,9 @@ class GitHubWorkspace:
             mode="pull-request" if write_enabled else "read-only",
         )
 
-    async def list_files(self) -> list[str]:
+    async def list_files(self, *, ref: str | None = None) -> list[str]:
         repository = self._require_repository()
-        branch = quote(self._config.agent_github_branch, safe="")
+        branch = quote(ref or self._config.agent_github_branch, safe="")
         payload = await self._request(
             "GET",
             f"/repos/{repository}/git/trees/{branch}",
@@ -81,12 +87,22 @@ class GitHubWorkspace:
                 break
         return paths
 
-    async def read_files(self, paths: list[str]) -> list[WorkspaceFile]:
-        return await self._read_files_at_ref(paths, self._config.agent_github_branch)
+    async def read_files(
+        self,
+        paths: list[str],
+        *,
+        ref: str | None = None,
+    ) -> list[WorkspaceFile]:
+        return await self._read_files_at_ref(paths, ref or self._config.agent_github_branch)
 
-    async def materialize_snapshot(self, destination: Path) -> None:
+    async def materialize_snapshot(
+        self,
+        destination: Path,
+        *,
+        ref: str | None = None,
+    ) -> None:
         repository = self._require_repository()
-        branch = quote(self._config.agent_github_branch, safe="")
+        branch = quote(ref or self._config.agent_github_branch, safe="")
         try:
             response = await self._client.get(f"/repos/{repository}/zipball/{branch}")
         except httpx.HTTPError as exc:
@@ -208,6 +224,10 @@ class GitHubWorkspace:
         if proposal.status is not ProposalStatus.PENDING:
             raise WorkspaceError("Only pending proposals can be applied.")
 
+        selected_changes = self._selected_changes(proposal)
+        if not selected_changes:
+            raise WorkspaceError("Approve at least one proposed file before creating a Pull Request.")
+
         repository = self._require_repository()
         branch_name = f"kimi-agent/{proposal.id}"
         base_ref = await self._request(
@@ -225,7 +245,7 @@ class GitHubWorkspace:
         )
 
         try:
-            for change in proposal.changes:
+            for change in selected_changes:
                 path = self._policy.validate_path(change.path)
                 self._policy.validate_content(path, change.content)
                 payload = {
@@ -248,7 +268,7 @@ class GitHubWorkspace:
                     "title": f"Kimi Agent: {proposal.summary[:120]}",
                     "head": branch_name,
                     "base": proposal.base_branch,
-                    "body": self._build_pull_request_body(proposal),
+                    "body": self._build_pull_request_body(proposal, selected_changes),
                 },
             )
         except Exception:
@@ -259,6 +279,7 @@ class GitHubWorkspace:
         proposal.branch_name = branch_name
         proposal.pull_request_url = pull_request.get("html_url")
         proposal.pull_request_number = pull_request.get("number")
+        proposal.applied_paths = tuple(change.path for change in selected_changes)
         return proposal
 
     async def undo_proposal(self, proposal: ChangeProposal) -> ChangeProposal:
@@ -308,6 +329,12 @@ class GitHubWorkspace:
                 )
             )
         return files
+
+    def _selected_changes(self, proposal: ChangeProposal) -> list[ProposedFileChange]:
+        if not self._config.agent_per_file_approval_enabled:
+            return list(proposal.changes)
+        approved = set(proposal.approved_paths)
+        return [change for change in proposal.changes if change.path in approved]
 
     async def _job_log_excerpt(self, repository: str, job_id: int) -> str:
         try:
@@ -364,17 +391,26 @@ class GitHubWorkspace:
         return response.json()
 
     @staticmethod
-    def _build_pull_request_body(proposal: ChangeProposal) -> str:
+    def _build_pull_request_body(
+        proposal: ChangeProposal,
+        selected_changes: list[ProposedFileChange],
+    ) -> str:
         steps = "\n".join(f"- {step}" for step in proposal.plan.steps)
         files = "\n".join(
-            f"- `{change.path}` — {change.reason}" for change in proposal.changes
+            f"- `{change.path}` — {change.reason}" for change in selected_changes
+        )
+        parent = (
+            f"\n\n## Parent proposal\n`{proposal.parent_proposal_id}`"
+            if proposal.parent_proposal_id
+            else ""
         )
         return (
             "## Summary\n"
             f"{proposal.summary}\n\n"
             "## Plan\n"
             f"{steps}\n\n"
-            "## Files\n"
-            f"{files}\n\n"
+            "## Approved files\n"
+            f"{files}"
+            f"{parent}\n\n"
             "Generated by Kimi Coding Workspace after explicit user approval."
         )
