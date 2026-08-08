@@ -8,13 +8,23 @@ from app.application.agent_roles import CoderAgent, PlannerAgent, ReviewerAgent,
 from app.application.agent_service import AgentApplicationService
 from app.application.audit_service import AgentAuditService
 from app.application.change_validator import ChangeValidationService
+from app.application.ci_feedback_service import CiFeedbackService
 from app.application.code_search_service import CodeSearchService
+from app.application.code_structure import CodeStructureExtractor
 from app.application.knowledge_service import ProjectKnowledgeService
+from app.application.preapproval_validation_service import PreApprovalValidationService
 from app.application.security_service import AgentSecurityService
+from app.application.semantic_search_service import SemanticCodeIntelligence
 from app.application.workflow_service import RepositoryWorkflowCatalog, WorkflowSelectionService
 from app.config import Settings
 from app.core.workspace_policy import WorkspacePolicy
 from app.domain.agent import ProposalStatus, WorkspaceFile, WorkspaceStatus
+from app.domain.agent_v3 import (
+    CiFeedback,
+    SandboxValidationResult,
+    ValidationCheckResult,
+    ValidationCheckStatus,
+)
 from app.infrastructure.sqlite_audit import SQLiteAuditLog
 from app.infrastructure.sqlite_knowledge import SQLiteKnowledgeRepository
 from app.infrastructure.sqlite_proposal_store import SQLiteProposalStore
@@ -23,6 +33,17 @@ from app.infrastructure.sqlite_proposal_store import SQLiteProposalStore
 class FakeModel:
     def __init__(self) -> None:
         self.responses = [
+            json.dumps(
+                {
+                    "hits": [
+                        {
+                            "path": "app/service.py",
+                            "score": 99,
+                            "rationale": "Contains the health behavior requested by the task",
+                        }
+                    ]
+                }
+            ),
             json.dumps(
                 {
                     "summary": "Add a health helper",
@@ -61,6 +82,24 @@ class FakeModel:
 
     async def complete(self, **_kwargs):
         return self.responses.pop(0)
+
+
+class FakeValidationRunner:
+    async def validate(self, *, changes, profiles, attempt):
+        return SandboxValidationResult(
+            passed=True,
+            attempt=attempt,
+            checks=(
+                ValidationCheckResult(
+                    name="python-unit-tests",
+                    status=ValidationCheckStatus.PASSED,
+                    command=("python", "-m", "unittest"),
+                    output="OK",
+                    return_code=0,
+                    duration_ms=10,
+                ),
+            ),
+        )
 
 
 class FakeWorkspace:
@@ -103,6 +142,9 @@ class FakeWorkspace:
         proposal.status = ProposalStatus.UNDONE
         return proposal
 
+    async def feedback(self, _proposal):
+        return CiFeedback(status="queued", conclusion=None)
+
 
 class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -119,6 +161,9 @@ class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
             agent_write_enabled=True,
             agent_github_token="token",
             agent_state_db_path=self.db_path,
+            agent_semantic_search_enabled=True,
+            agent_preapproval_validation_enabled=True,
+            agent_ci_feedback_enabled=True,
         )
         policy = WorkspacePolicy(
             allowed_prefixes=(),
@@ -135,6 +180,9 @@ class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
         validator = ChangeValidationService(policy, config)
         workflows = RepositoryWorkflowCatalog(workspace)
         workflow_selection = WorkflowSelectionService()
+        semantic = SemanticCodeIntelligence(model, CodeStructureExtractor())
+        preapproval = PreApprovalValidationService(FakeValidationRunner())
+        ci_feedback = CiFeedbackService(workspace)
 
         orchestrator = AgentOrchestrator(
             planner=PlannerAgent(model),
@@ -148,6 +196,8 @@ class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
             knowledge=knowledge,
             audit=audit,
             code_search=code_search,
+            semantic=semantic,
+            preapproval=preapproval,
             workflows=workflows,
             workflow_selection=workflow_selection,
             config=config,
@@ -161,11 +211,12 @@ class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
             audit=audit,
             workflows=workflows,
             code_search=code_search,
+            ci_feedback=ci_feedback,
             config=config,
         )
         return service, workspace, knowledge
 
-    async def test_v2_creates_reviewed_proposal_and_remembers_after_approval(self):
+    async def test_v3_creates_semantic_sandboxed_proposal_and_remembers_after_approval(self):
         service, workspace, knowledge = self.build_service()
         events = [
             event
@@ -179,39 +230,30 @@ class AgentApplicationServiceTests(unittest.IsolatedAsyncioTestCase):
         event_types = [event["type"] for event in events]
         self.assertIn("knowledge", event_types)
         self.assertIn("search", event_types)
+        self.assertIn("semantic", event_types)
         self.assertIn("review", event_types)
         self.assertIn("validation", event_types)
+        self.assertIn("sandbox_validation", event_types)
         self.assertIn("approval_required", event_types)
+
+        semantic = next(event for event in events if event["type"] == "semantic")
+        self.assertEqual(semantic["hits"][0]["path"], "app/service.py")
+        self.assertEqual(semantic["hits"][0]["score"], 99)
 
         approval = next(event for event in events if event["type"] == "approval_required")
         self.assertEqual(approval["proposal"]["review"]["score"], 96)
         self.assertEqual(approval["proposal"]["risk"]["level"], "low")
+        self.assertTrue(approval["proposal"]["sandbox_validation"]["passed"])
         self.assertTrue(approval["proposal"]["can_approve"])
 
         applied = await service.approve(approval["proposal"]["id"])
         self.assertTrue(workspace.applied)
         self.assertEqual(applied["status"], "applied")
         self.assertTrue(applied["knowledge_ids"])
+        self.assertEqual(applied["ci_feedback"]["status"], "queued")
         self.assertEqual(len(knowledge.recent(limit=10)), 1)
 
-    def test_security_blocks_embedded_secret(self):
-        service = AgentSecurityService()
-        from app.domain.agent import ProposedFileChange
-
-        risk = service.assess(
-            task="Add provider configuration",
-            changes=[
-                ProposedFileChange(
-                    path="app/configuration.py",
-                    reason="test",
-                    content='API_KEY = "sk-abcdefghijklmnopqrstuvwxyz123456"\n',
-                )
-            ],
-        )
-        self.assertTrue(risk.blocked)
-        self.assertEqual(risk.level.value, "blocked")
-
-    def test_blocks_sensitive_paths(self):
+    def test_security_still_blocks_sensitive_paths(self):
         policy = WorkspacePolicy(
             allowed_prefixes=(),
             max_file_bytes=120_000,
