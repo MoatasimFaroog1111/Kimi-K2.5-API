@@ -8,15 +8,95 @@ export class AgentApi {
       || "";
   }
 
-  async status() {
+  status() {
     return this.#jsonRequest("/agent/status", { method: "GET" });
   }
 
-  async streamTask(payload, onEvent) {
-    const response = await fetch("/agent/stream", {
+  runs(limit = 30) {
+    return this.#jsonRequest(`/agent/runs?limit=${encodeURIComponent(limit)}`, {
+      method: "GET",
+    });
+  }
+
+  run(runId) {
+    return this.#jsonRequest(`/agent/runs/${encodeURIComponent(runId)}`, {
+      method: "GET",
+    });
+  }
+
+  pause(runId) {
+    return this.#jsonRequest(`/agent/runs/${encodeURIComponent(runId)}/pause`, {
       method: "POST",
-      headers: this.#headers(true),
-      body: JSON.stringify(payload),
+    });
+  }
+
+  cancel(runId) {
+    return this.#jsonRequest(`/agent/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: "POST",
+    });
+  }
+
+  streamTask(payload, onEvent) {
+    return this.#streamRequest("/agent/stream", payload, onEvent);
+  }
+
+  resume(runId, onEvent) {
+    return this.#streamRequest(
+      `/agent/runs/${encodeURIComponent(runId)}/resume`,
+      null,
+      onEvent,
+    );
+  }
+
+  setFileApprovals(proposalId, paths) {
+    return this.#jsonRequest(
+      `/agent/proposals/${encodeURIComponent(proposalId)}/file-approvals`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paths }),
+      },
+    );
+  }
+
+  approve(proposalId) {
+    return this.#jsonRequest(`/agent/proposals/${encodeURIComponent(proposalId)}/approve`, {
+      method: "POST",
+    });
+  }
+
+  reject(proposalId) {
+    return this.#jsonRequest(`/agent/proposals/${encodeURIComponent(proposalId)}/reject`, {
+      method: "POST",
+    });
+  }
+
+  undo(proposalId) {
+    return this.#jsonRequest(`/agent/proposals/${encodeURIComponent(proposalId)}/undo`, {
+      method: "POST",
+    });
+  }
+
+  ci(proposalId) {
+    return this.#jsonRequest(`/agent/proposals/${encodeURIComponent(proposalId)}/ci`, {
+      method: "GET",
+    });
+  }
+
+  repairCi(proposalId, payload, onEvent) {
+    return this.#streamRequest(
+      `/agent/proposals/${encodeURIComponent(proposalId)}/ci/repair/stream`,
+      payload,
+      onEvent,
+    );
+  }
+
+  async #streamRequest(url, payload, onEvent) {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: this.#headers(payload !== null),
+      ...(payload !== null ? { body: JSON.stringify(payload) } : {}),
+      cache: "no-store",
     });
     if (!response.ok) {
       throw await this.#responseError(response);
@@ -28,7 +108,6 @@ export class AgentApi {
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
-
     while (true) {
       const { value, done } = await reader.read();
       buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
@@ -44,34 +123,13 @@ export class AgentApi {
     }
   }
 
-  approve(proposalId) {
-    return this.#jsonRequest(`/agent/proposals/${proposalId}/approve`, {
-      method: "POST",
-    });
-  }
-
-  reject(proposalId) {
-    return this.#jsonRequest(`/agent/proposals/${proposalId}/reject`, {
-      method: "POST",
-    });
-  }
-
-  undo(proposalId) {
-    return this.#jsonRequest(`/agent/proposals/${proposalId}/undo`, {
-      method: "POST",
-    });
-  }
-
-  ci(proposalId) {
-    return this.#jsonRequest(`/agent/proposals/${proposalId}/ci`, {
-      method: "GET",
-    });
-  }
-
   async #jsonRequest(url, options) {
     const response = await fetch(url, {
       ...options,
-      headers: this.#headers(false),
+      headers: {
+        ...this.#headers(Boolean(options?.body)),
+        ...(options?.headers || {}),
+      },
       cache: "no-store",
     });
     if (!response.ok) {
